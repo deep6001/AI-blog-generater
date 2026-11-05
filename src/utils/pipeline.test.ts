@@ -174,3 +174,19 @@ test('recordProjectRunUsage and getProjectUsageHistory return sorted usage recor
 });
 
 
+
+test('interpolatePrompt fills [BLOG TOPIC] and still passes the previous step', () => {
+  const out = interpolatePrompt('Create 10 FAQs about [BLOG TOPIC].', {
+    input: 'HydraFacial for acne-prone skin',
+    previous_step: 'DRAFT BODY',
+  });
+  assert.ok(out.startsWith('Create 10 FAQs about HydraFacial for acne-prone skin.'));
+  assert.ok(out.includes('DRAFT BODY'));
+  assert.ok(!out.includes('Blog topic:'));
+});
+
+test('interpolatePrompt adds both topic and previous output when a prompt references neither', () => {
+  const out = interpolatePrompt('Polish this for publication.', { input: 'TOPIC X', previous_step: 'PREV Y' });
+  assert.ok(out.includes('Blog topic:\nTOPIC X'));
+  assert.ok(out.includes('Output of the previous step (build on it):\nPREV Y'));
+});

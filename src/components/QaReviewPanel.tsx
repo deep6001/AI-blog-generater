@@ -6,12 +6,14 @@ import { createDefaultGuidelineProfile } from '../utils/guidelines';
 import { calculateGeminiCost, recordProjectRunUsage } from '../utils/pipeline';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AlertCircle, ClipboardCheck, Loader2, RefreshCw } from 'lucide-react';
+import { modelName } from '../services/models';
 
 interface QaReviewPanelProps {
   project: Project;
   session: RunSession;
   article: string;
   guidelines: GuidelineProfile | null;
+  model: string | null;
   onUpdateSession: (session: RunSession) => void;
 }
 
@@ -26,6 +28,8 @@ const verdictStyle: Record<string, string> = {
   'Ready to Publish': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
   'Ready to Publish After Minor Changes':
     'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+  'Requires Substantial Revision':
+    'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200 dark:border-rose-800',
   'Not Ready to Publish Yet': 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-800',
 };
 
@@ -34,7 +38,7 @@ function reviewBody(review: string): string {
   return review.replace(/^\s*(VERDICT|SCORE|SCORE_AFTER):.*$/gim, '').trim();
 }
 
-export const QaReviewPanel: React.FC<QaReviewPanelProps> = ({ project, session, article, guidelines, onUpdateSession }) => {
+export const QaReviewPanel: React.FC<QaReviewPanelProps> = ({ project, session, article, guidelines, model, onUpdateSession }) => {
   const { user, currentTenant } = useAuth();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +51,7 @@ export const QaReviewPanel: React.FC<QaReviewPanelProps> = ({ project, session, 
     setError(null);
     try {
       const sourceUrls = session.research?.sources.map((s) => s.url) || [];
-      const result = await requestQaReview(article, profile, sourceUrls);
+      const result = await requestQaReview(article, profile, sourceUrls, model);
 
       if (result.tokenUsage) {
         const { promptTokens, candidatesTokens, totalTokens } = result.tokenUsage;
@@ -96,7 +100,7 @@ export const QaReviewPanel: React.FC<QaReviewPanelProps> = ({ project, session, 
             <h3 className="font-bold text-sm text-slate-900 dark:text-white">QA and Reference Review</h3>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
               {guidelines
-                ? `Checked against the "${guidelines.name}" guidelines, with references verified on the web.`
+                ? `Checked against the "${guidelines.name}" guidelines with ${modelName(model) || 'the default model'}, references verified on the web.`
                 : 'No client profile on this project, so the built-in UK medical rules are used. Set one in project settings.'}
             </p>
           </div>

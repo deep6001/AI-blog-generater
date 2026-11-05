@@ -1,38 +1,50 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { runResearch, researchContext, findUnverifiedUrls } from './server/research';
-import { guidelinesContext, runQaReview, type GuidelineInput } from './server/guidelines';
 
 dotenv.config();
+
+// llm.ts reads API keys at import time, so load it after dotenv.
+const { availableProviders, defaultModelRef, describeModelError, generate, listModels, resolveModel, PROVIDER_LABELS } =
+  await import('./server/llm');
+const { runResearch, researchContext, findUnverifiedUrls } = await import('./server/research');
+const { guidelinesContext, runQaReview } = await import('./server/guidelines');
+type ModelInfo = import('./server/llm').ModelInfo;
+type GuidelineInput = import('./server/guidelines').GuidelineInput;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-const STEP_TIMEOUT_MS = Number(process.env.GEMINI_STEP_TIMEOUT_MS) || 60000;
-const RESEARCH_TIMEOUT_MS = Number(process.env.GEMINI_RESEARCH_TIMEOUT_MS) || 90000;
-const QA_TIMEOUT_MS = Number(process.env.GEMINI_QA_TIMEOUT_MS) || 150000;
+const STEP_TIMEOUT_MS = Number(process.env.STEP_TIMEOUT_MS || process.env.GEMINI_STEP_TIMEOUT_MS) || 120000;
+const RESEARCH_TIMEOUT_MS = Number(process.env.RESEARCH_TIMEOUT_MS || process.env.GEMINI_RESEARCH_TIMEOUT_MS) || 150000;
+const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || process.env.GEMINI_QA_TIMEOUT_MS) || 180000;
 
 app.use(express.json({ limit: '10mb' }));
 
-const apiKey = process.env.GEMINI_API_KEY;
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', hasApiKey: Boolean(ai), model: MODEL });
+// One line per API call: method, path, model, status and duration.
+app.use('/api', (req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    const model = typeof req.body?.model === 'string' ? ` ${req.body.model}` : '';
+    console.log(`[api] ${req.method} ${req.originalUrl}${model} -> ${res.statusCode} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  });
+  next();
 });
 
-function withTimeout<T>(promise: Promise<T>, ms: number, timeoutErrorMsg: string): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(timeoutErrorMsg)), ms);
+app.get('/api/health', async (_req, res) => {
+  const providers = availableProviders();
+  res.json({ status: 'ok', hasApiKey: providers.length > 0, providers, model: await defaultModelRef() });
+});
+
+app.get('/api/models', async (_req, res) => {
+  res.json({
+    defaultModel: await defaultModelRef(),
+    providers: availableProviders().map((id) => ({ id, label: PROVIDER_LABELS[id] })),
+    models: await listModels(),
   });
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
-}
+});
 
 /** Validates a guideline profile from the client and fills any missing optional fields. */
 function toGuidelineInput(g: any): GuidelineInput | null {
@@ -54,37 +66,35 @@ function toGuidelineInput(g: any): GuidelineInput | null {
   };
 }
 
-function requireAi(res: express.Response): GoogleGenAI | null {
-  if (!ai) res.status(503).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
-  return ai;
+function sendModelError(res: express.Response, where: string, err: any, info?: ModelInfo) {
+  const { status, message } = describeModelError(err, info);
+  console.error(`Model call failed in ${where} (${info?.id ?? 'no model'}):`, err?.message || err);
+  res.status(status).json({ error: message });
 }
 
-function sendModelError(res: express.Response, where: string, err: any) {
-  const message = String(err?.message || err || 'unknown error');
-  console.error(`Gemini call failed in ${where}:`, message);
-  if (err?.status === 429 || /RESOURCE_EXHAUSTED|"code":\s*429/.test(message)) {
-    res.status(429).json({
-      error: 'Gemini quota exceeded for this API key. Check its limits and billing at https://ai.dev/rate-limit, then retry.',
-    });
-    return;
+/** Resolves the requested "provider:model", or answers with an error and returns null. */
+async function modelOrError(res: express.Response, ref: unknown, where: string): Promise<ModelInfo | null> {
+  try {
+    return await resolveModel(ref);
+  } catch (err) {
+    sendModelError(res, where, err);
+    return null;
   }
-  res.status(502).json({ error: `AI model request failed: ${message}` });
 }
 
-// Web research: Google Search grounding for facts, URL context for reference article style
+// Web research: provider web search for cited facts, plus reference articles for house style
 app.post('/api/research', async (req, res) => {
-  const { topic, audience, tone, referenceUrls, allowedDomains } = req.body;
+  const { topic, audience, tone, referenceUrls, allowedDomains, model } = req.body;
   if (!topic || typeof topic !== 'string') {
     res.status(400).json({ error: 'Missing topic parameter.' });
     return;
   }
-  const client = requireAi(res);
-  if (!client) return;
+  const info = await modelOrError(res, model, '/api/research');
+  if (!info) return;
 
   try {
     const result = await runResearch(
-      client,
-      MODEL,
+      info,
       {
         topic,
         audience,
@@ -92,23 +102,22 @@ app.post('/api/research', async (req, res) => {
         referenceUrls: Array.isArray(referenceUrls) ? referenceUrls : [],
         allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
       },
-      withTimeout,
       RESEARCH_TIMEOUT_MS
     );
-    res.json({ ...result, model: MODEL });
+    res.json({ ...result, model: info.id });
   } catch (err: any) {
-    sendModelError(res, '/api/research', err);
+    sendModelError(res, '/api/research', err, info);
   }
 });
 
 app.post('/api/generate-step', async (req, res) => {
-  const { prompt, systemInstruction, temperature = 0.7, research, guidelines, targetWordCount } = req.body;
+  const { prompt, systemInstruction, temperature = 0.7, research, guidelines, targetWordCount, model } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     res.status(400).json({ error: 'Missing prompt parameter.' });
     return;
   }
-  const client = requireAi(res);
-  if (!client) return;
+  const info = await modelOrError(res, model, '/api/generate-step');
+  if (!info) return;
 
   const hasResearch = research && typeof research.brief === 'string' && Array.isArray(research.sources);
   const profile = toGuidelineInput(guidelines);
@@ -118,45 +127,34 @@ app.post('/api/generate-step', async (req, res) => {
     (hasResearch ? researchContext(research) : '');
 
   try {
-    const response = await withTimeout(
-      client.models.generateContent({
-        model: MODEL,
-        contents: fullPrompt,
-        config: {
-          systemInstruction: systemInstruction || 'You are an expert content strategist and professional writer.',
-          temperature: Math.min(Math.max(Number(temperature) || 0.7, 0.1), 1.0),
-        },
-      }),
-      STEP_TIMEOUT_MS,
-      `Gemini request timed out after ${STEP_TIMEOUT_MS / 1000} seconds`
-    );
+    const { text, usage } = await generate(info, {
+      prompt: fullPrompt,
+      system: systemInstruction || 'You are an expert content strategist and professional writer.',
+      temperature: Math.min(Math.max(Number(temperature) || 0.7, 0.1), 1.0),
+      signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
+    });
 
-    const text = response.text || '';
     if (!text.trim()) {
       res.status(502).json({ error: 'The model returned an empty response. Please retry this step.' });
       return;
     }
 
-    const promptTokens = response.usageMetadata?.promptTokenCount || Math.round(fullPrompt.length / 4);
-    const candidatesTokens = response.usageMetadata?.candidatesTokenCount || Math.round(text.length / 4);
+    const promptTokens = usage.promptTokens || Math.round(fullPrompt.length / 4);
+    const candidatesTokens = usage.candidatesTokens || Math.round(text.length / 4);
     res.json({
       text,
-      mode: 'gemini',
+      model: info.id,
       unverifiedUrls: hasResearch ? findUnverifiedUrls(text, research.sources) : [],
-      usage: {
-        promptTokens,
-        candidatesTokens,
-        totalTokens: response.usageMetadata?.totalTokenCount || promptTokens + candidatesTokens,
-      },
+      usage: { promptTokens, candidatesTokens, totalTokens: usage.totalTokens || promptTokens + candidatesTokens },
     });
   } catch (err: any) {
-    sendModelError(res, '/api/generate-step', err);
+    sendModelError(res, '/api/generate-step', err, info);
   }
 });
 
 // Full start-to-finish QA and reference check against the client's guideline profile
 app.post('/api/qa-review', async (req, res) => {
-  const { article, guidelines, sourceUrls } = req.body;
+  const { article, guidelines, sourceUrls, model } = req.body;
   if (!article || typeof article !== 'string') {
     res.status(400).json({ error: 'Missing article to review.' });
     return;
@@ -166,26 +164,26 @@ app.post('/api/qa-review', async (req, res) => {
     res.status(400).json({ error: 'A guideline profile is required for QA review.' });
     return;
   }
-  const client = requireAi(res);
-  if (!client) return;
+  const info = await modelOrError(res, model, '/api/qa-review');
+  if (!info) return;
 
   try {
     const urls = Array.isArray(sourceUrls) ? sourceUrls.filter((u: unknown) => typeof u === 'string') : [];
-    const result = await runQaReview(client, MODEL, article, profile, urls, withTimeout, QA_TIMEOUT_MS);
-    res.json({ ...result, model: MODEL });
+    const result = await runQaReview(info, article, profile, urls, QA_TIMEOUT_MS);
+    res.json({ ...result, model: info.id });
   } catch (err: any) {
-    sendModelError(res, '/api/qa-review', err);
+    sendModelError(res, '/api/qa-review', err, info);
   }
 });
 
 app.post('/api/chat-refine', async (req, res) => {
-  const { stepTitle, currentOutput, userMessage, systemRole } = req.body;
+  const { stepTitle, currentOutput, userMessage, systemRole, model } = req.body;
   if (!currentOutput || !userMessage) {
     res.status(400).json({ error: 'currentOutput and userMessage are required.' });
     return;
   }
-  const client = requireAi(res);
-  if (!client) return;
+  const info = await modelOrError(res, model, '/api/chat-refine');
+  if (!info) return;
 
   const prompt = `You are an expert editor (${systemRole || 'Editor'}).
 The user is working on step "${stepTitle}".
@@ -209,13 +207,7 @@ REPLY: <your concise conversational response to the user>
 <the revised full content here>`;
 
   try {
-    const response = await withTimeout(
-      client.models.generateContent({ model: MODEL, contents: prompt, config: { temperature: 0.6 } }),
-      STEP_TIMEOUT_MS,
-      `Gemini chat refinement timed out after ${STEP_TIMEOUT_MS / 1000} seconds`
-    );
-
-    const raw = response.text || '';
+    const { text: raw } = await generate(info, { prompt, temperature: 0.6, signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
     if (raw.includes('---UPDATED_CONTENT---')) {
       const [replyPart, content] = raw.split('---UPDATED_CONTENT---');
       res.json({ reply: replyPart.replace(/^REPLY:\s*/i, '').trim(), updatedContent: content.trim() });
@@ -223,7 +215,7 @@ REPLY: <your concise conversational response to the user>
       res.json({ reply: 'Updated the step according to your feedback.', updatedContent: raw.trim() });
     }
   } catch (err: any) {
-    sendModelError(res, '/api/chat-refine', err);
+    sendModelError(res, '/api/chat-refine', err, info);
   }
 });
 

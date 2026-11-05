@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Project, RunSession, StepOutputRecord, ChatMessage, TokenUsage, ResearchPack, GuidelineProfile } from '../types/pipeline';
 import { guidelinePayload } from '../services/guidelines';
+import { ModelCatalog, modelName } from '../services/models';
 import { useAuth } from '../context/AuthContext';
 import { fetchResearch, saveResearchRun } from '../services/research';
 import {
@@ -12,6 +13,7 @@ import {
   DailyTokenLog,
 } from '../utils/pipeline';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { RunStatusBar, RunOutcome, RunActivity } from './RunStatusBar';
 import {
   Play,
   RotateCcw,
@@ -34,6 +36,7 @@ import {
   Coins,
   Zap,
   Globe,
+  Loader2,
   ExternalLink,
 } from 'lucide-react';
 
@@ -41,28 +44,72 @@ interface ExecutionStudioProps {
   project: Project;
   currentSession: RunSession;
   guidelines: GuidelineProfile | null;
+  modelCatalog: ModelCatalog;
   onUpdateSession: (session: RunSession) => void;
   onViewFinalBlog: () => void;
 }
+
+// Runs keep going when the studio unmounts (tab switch), so in-flight runs are tracked outside the component.
+// A saved "running" status with no in-flight run means the page was reloaded mid-run.
+const inFlightRuns = new Map<string, number>();
+const INTERRUPTED = 'Interrupted: the page was reloaded or closed while this was running. Run it again.';
 
 export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   project,
   currentSession,
   guidelines,
+  modelCatalog,
   onUpdateSession,
   onViewFinalBlog,
 }) => {
+  const projectModel = project.model || modelCatalog.defaultModel;
   const { user, currentTenant } = useAuth();
   const [useWebResearch, setUseWebResearch] = useState(true);
-  const [researchStatus, setResearchStatus] = useState<{ state: 'idle' | 'running' | 'failed'; error?: string }>({
-    state: 'idle',
-  });
+  const [researchStatus, setResearchStatus] = useState<{
+    state: 'idle' | 'running' | 'failed';
+    error?: string;
+    startedAt?: string;
+  }>({ state: 'idle' });
+  const [outcome, setOutcome] = useState<RunOutcome | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   // Run handlers spread a render-time copy of currentSession, so research is kept in a ref
   // and attached to every update rather than relying on that copy.
   const researchRef = useRef<ResearchPack | undefined>(currentSession.research);
   useEffect(() => {
     researchRef.current = currentSession.research;
+  }, [currentSession.id]);
+
+  const topicRef = useRef<HTMLTextAreaElement>(null);
+  const focusTopic = () => {
+    topicRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    topicRef.current?.focus();
+  };
+
+  function tracked<A extends unknown[]>(fn: (...args: A) => Promise<void>) {
+    return async (...args: A) => {
+      const id = currentSession.id;
+      setOutcome(null);
+      inFlightRuns.set(id, (inFlightRuns.get(id) || 0) + 1);
+      try {
+        await fn(...args);
+      } finally {
+        const n = (inFlightRuns.get(id) || 1) - 1;
+        if (n > 0) inFlightRuns.set(id, n);
+        else inFlightRuns.delete(id);
+      }
+    };
+  }
+
+  // Release a session left "running" by a reload, so its buttons work again.
+  useEffect(() => {
+    const outputs = currentSession.stepOutputs;
+    const stuck = currentSession.status === 'running' || Object.values(outputs).some((o) => o.status === 'running');
+    if (!stuck || inFlightRuns.has(currentSession.id)) return;
+    const fixed = Object.fromEntries(
+      Object.entries(outputs).map(([k, o]) => [k, o.status === 'running' ? { ...o, status: 'failed' as const, error: INTERRUPTED } : o])
+    );
+    onUpdateSession({ ...currentSession, status: 'failed', stepOutputs: fixed });
   }, [currentSession.id]);
 
   const updateSession = (session: RunSession) => {
@@ -75,9 +122,9 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
     const existing = researchRef.current;
     if (existing && existing.topic === topic.trim()) return existing;
 
-    setResearchStatus({ state: 'running' });
+    setResearchStatus({ state: 'running', startedAt: new Date().toISOString() });
     try {
-      const pack = await fetchResearch(project, topic.trim(), guidelines?.allowedDomains || []);
+      const pack = await fetchResearch(project, topic.trim(), guidelines?.allowedDomains || [], project.model);
       researchRef.current = pack;
 
       if (pack.tokenUsage) {
@@ -233,6 +280,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
             systemInstruction: `You are acting as: ${step.systemRole}. Always output clean, professional content adhering to the instructions.`,
             temperature: step.temperature,
             guidelines: guidelines ? guidelinePayload(guidelines) : undefined,
+            model: step.model || project.model || undefined,
             targetWordCount: project.targetWordCount,
             research: research && {
               brief: research.brief,
@@ -301,9 +349,9 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   };
 
   // Run or retry a single step directly
-  const handleRunSingleStep = async (stepId: string) => {
+  const handleRunSingleStep = tracked(async (stepId: string) => {
     if (!inputTopic.trim()) {
-      alert('Please enter a topic or input notes to start.');
+      focusTopic();
       return;
     }
 
@@ -378,12 +426,12 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
         },
       });
     }
-  };
+  });
 
   // Resume the pipeline from the first incomplete or failed step
-  const handleResumePipeline = async () => {
+  const handleResumePipeline = tracked(async () => {
     if (!inputTopic.trim()) {
-      alert('Please enter a topic or input notes to start.');
+      focusTopic();
       return;
     }
 
@@ -472,12 +520,12 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
         return;
       }
     }
-  };
+  });
 
   // Run next single step
-  const handleRunNextStep = async () => {
+  const handleRunNextStep = tracked(async () => {
     if (!inputTopic.trim()) {
-      alert('Please enter a topic or input notes to start.');
+      focusTopic();
       return;
     }
 
@@ -562,12 +610,12 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
         },
       });
     }
-  };
+  });
 
   // Run all remaining steps sequentially
-  const handleRunAllSteps = async () => {
+  const handleRunAllSteps = tracked(async () => {
     if (!inputTopic.trim()) {
-      alert('Please enter a topic or input notes to start.');
+      focusTopic();
       return;
     }
 
@@ -652,7 +700,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
         return;
       }
     }
-  };
+  });
 
   // Chat refinement on current selected step
   const handleChatRefine = async (e: React.FormEvent) => {
@@ -693,6 +741,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           currentOutput: currentOutputRecord.output,
           userMessage: userMsg,
           systemRole: stepObj?.systemRole || 'Editor',
+          model: stepObj?.model || project.model || undefined,
         }),
       });
 
@@ -785,9 +834,86 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   const hasFailedStep = Object.values(currentSession.stepOutputs).some((o) => o.status === 'failed');
   const hasCompletedAny = Object.values(currentSession.stepOutputs).some((o) => o.status === 'completed');
   const canResume = (hasFailedStep || (hasCompletedAny && !isCompleted)) && !isRunning;
+  const completedCount = activeSteps.filter((s) => currentSession.stepOutputs[s.id]?.status === 'completed').length;
+
+  const runningIndex = activeSteps.findIndex((s) => currentSession.stepOutputs[s.id]?.status === 'running');
+  const activity: RunActivity | null = isResearching
+    ? {
+        label: 'Researching the web',
+        detail: `Finding sources for "${inputTopic.trim()}" with ${modelName(projectModel) || 'the AI model'}. This usually takes 30 to 90 seconds.`,
+        startedAt: researchStatus.startedAt,
+        completed: completedCount,
+        total: activeSteps.length,
+      }
+    : runningIndex >= 0
+      ? {
+          label: `Writing step ${runningIndex + 1} of ${activeSteps.length}: ${activeSteps[runningIndex].title}`,
+          detail: `Using ${modelName(activeSteps[runningIndex].model || projectModel) || 'the AI model'}`,
+          startedAt: currentSession.stepOutputs[activeSteps[runningIndex].id]?.startedAt,
+          completed: completedCount,
+          total: activeSteps.length,
+        }
+      : currentSession.status === 'running'
+        ? { label: 'Preparing the next step', detail: '', completed: completedCount, total: activeSteps.length }
+        : null;
+
+  // Tick the elapsed timer while something is running.
+  useEffect(() => {
+    if (!isRunning) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [isRunning]);
+
+  // When a run ends, say how it went.
+  const wasRunning = useRef(isRunning);
+  useEffect(() => {
+    if (wasRunning.current && !isRunning) {
+      const failedStep = activeSteps.find((s) => currentSession.stepOutputs[s.id]?.status === 'failed');
+      if (researchStatus.state === 'failed') {
+        setOutcome({ kind: 'error', message: `Web research failed. ${researchStatus.error || ''}` });
+      } else if (failedStep) {
+        const n = activeSteps.indexOf(failedStep) + 1;
+        setOutcome({
+          kind: 'error',
+          message: `Step ${n} failed: ${currentSession.stepOutputs[failedStep.id]?.error || 'unknown error'}`,
+          stepId: failedStep.id,
+        });
+      } else if (completedCount === activeSteps.length) {
+        setOutcome({ kind: 'success', message: `All ${activeSteps.length} steps finished. Open Final blog to review it.` });
+      } else {
+        const last = activeSteps
+          .filter((s) => currentSession.stepOutputs[s.id]?.completedAt)
+          .sort((a, b) =>
+            (currentSession.stepOutputs[b.id]!.completedAt || '').localeCompare(currentSession.stepOutputs[a.id]!.completedAt || '')
+          )[0];
+        if (last) {
+          setOutcome({ kind: 'success', message: `Step ${activeSteps.indexOf(last) + 1} finished: ${last.title}`, stepId: last.id });
+        }
+      }
+    }
+    wasRunning.current = isRunning;
+  }, [isRunning]);
+
+  useEffect(() => {
+    if (outcome?.kind !== 'success') return;
+    const t = setTimeout(() => setOutcome(null), 8000);
+    return () => clearTimeout(t);
+  }, [outcome]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
+      <RunStatusBar
+        activity={activity}
+        outcome={outcome}
+        now={now}
+        onDismiss={() => setOutcome(null)}
+        onShowStep={(id) => {
+          setSelectedStepId(id);
+          document.getElementById('step-output')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+      />
+
       {/* Input Header Panel */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-4 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -854,12 +980,20 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
         {/* Input Text Area */}
         <div className="space-y-2">
           <textarea
+            ref={topicRef}
             rows={2}
             value={inputTopic}
             onChange={(e) => setInputTopic(e.target.value)}
             placeholder="Type your blog topic, core idea, outline notes, or brief here... (e.g., 'Why Rust and WebAssembly are revolutionizing Cloud Infrastructure in 2026')"
             className="w-full text-sm px-4 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 leading-relaxed resize-y"
           />
+
+          {!inputTopic.trim() && (
+            <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              Enter a topic (or pick a suggestion) to run the pipeline. The run buttons stay disabled until you do.
+            </p>
+          )}
 
           {/* Quick topic suggestion pills */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -958,7 +1092,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
 
               <div className="flex items-center gap-1.5 font-medium bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 px-3 py-1.5 rounded-xl border border-emerald-200/80 dark:border-emerald-800/60">
                 <Coins className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span className="text-emerald-600 dark:text-emerald-400">Est. Gemini Cost:</span>
+                <span className="text-emerald-600 dark:text-emerald-400">Est. cost:</span>
                 <span className="font-mono font-bold">
                   ${(currentSession.totalTokens?.estimatedCostUsd || calculateGeminiCost(currentSession.totalTokens?.promptTokens || 0, currentSession.totalTokens?.candidatesTokens || 0)).toFixed(4)}
                 </span>
@@ -978,7 +1112,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
 
             <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
               <span>Model:</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">Gemini 3.8 Flash</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">{modelName(selectedStep?.model || projectModel) || 'No model configured'}</span>
             </div>
           </div>
         </div>
@@ -1167,8 +1301,18 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           </div>
 
           {/* Content Body */}
-          <div className="p-6 flex-1 overflow-y-auto">
-            {selectedRecord?.status === 'running' ? (
+          <div id="step-output" className="p-6 flex-1 overflow-y-auto scroll-mt-40">
+            {isResearching && selectedRecord?.status !== 'running' ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-4 text-center">
+                <Loader2 className="w-8 h-8 animate-spin text-slate-500" />
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Researching the web first</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm">
+                    The steps start as soon as the sources are in. You can follow progress in the bar at the top.
+                  </p>
+                </div>
+              </div>
+            ) : selectedRecord?.status === 'running' ? (
               <div className="flex flex-col items-center justify-center py-16 space-y-4 text-center">
                 <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center animate-spin">
                   <RotateCcw className="w-6 h-6" />
@@ -1178,7 +1322,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                     Executing {selectedStep.title}...
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm">
-                    Processing instructions through Gemini AI and synthesizing context from preceding steps.
+                    Sending this step to {modelName(selectedStep.model || projectModel) || 'the AI model'} with the previous step's output.
                   </p>
                 </div>
               </div>
@@ -1189,6 +1333,11 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                   <span>Execution Failed for Step: {selectedStep.title}</span>
                 </div>
 
+                {selectedRecord.startedAt && (
+                  <p className="text-[11px] text-rose-700/80 dark:text-rose-300/80">
+                    This attempt started {new Date(selectedRecord.startedAt).toLocaleString('en-GB')}.
+                  </p>
+                )}
                 <div className="bg-white/80 dark:bg-slate-900/80 p-3 rounded-xl border border-rose-200/60 dark:border-rose-800/60 font-mono text-[11px] text-rose-700 dark:text-rose-400 whitespace-pre-wrap break-words">
                   {selectedRecord.error || 'An unexpected error occurred during generation.'}
                 </div>
@@ -1197,14 +1346,22 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                   <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-[11px] space-y-1">
                     <p className="font-semibold">Why did this happen (HTTP 504 Gateway Timeout)?</p>
                     <p>
-                      The server proxy timed out while waiting for the Gemini API call to return. Retry the step; if it keeps happening, raise GEMINI_STEP_TIMEOUT_MS or shorten the prompt.
+                      The server timed out waiting for the AI model. Retry the step; if it keeps happening, raise STEP_TIMEOUT_MS in .env or shorten the prompt.
                     </p>
                   </div>
                 ) : null}
 
+                {!inputTopic.trim() && (
+                  <p className="text-[11px]">
+                    The topic box is empty, so this step can't run yet.{' '}
+                    <button type="button" onClick={focusTopic} className="font-semibold underline underline-offset-2">
+                      Enter a topic
+                    </button>
+                  </p>
+                )}
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
-                    disabled={isRunning}
+                    disabled={isRunning || !inputTopic.trim()}
                     onClick={() => handleRunSingleStep(selectedStep.id)}
                     className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-50"
                   >
@@ -1213,7 +1370,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                   </button>
 
                   <button
-                    disabled={isRunning}
+                    disabled={isRunning || !inputTopic.trim()}
                     onClick={handleResumePipeline}
                     className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-[0.98] disabled:opacity-50"
                   >

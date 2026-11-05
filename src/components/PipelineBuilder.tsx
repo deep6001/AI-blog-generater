@@ -1,4 +1,6 @@
 import React from 'react';
+import { ModelCatalog, modelName } from '../services/models';
+import { ModelSelect } from './ModelSelect';
 import { Project, PipelineStep } from '../types/pipeline';
 import {
   Plus,
@@ -9,10 +11,18 @@ import {
   Copy,
   ArrowLeft,
   Home,
+  AlertTriangle,
 } from 'lucide-react';
+
+/** A pasted guideline/checklist document: the model would reply to it instead of doing a step. */
+export function looksLikeGuidelineDocument(prompt: string): boolean {
+  const head = prompt.slice(0, 400);
+  return prompt.length > 8000 || (prompt.length > 3000 && /(guideline|instruction|checklist|consolidated list|here is the)/i.test(head));
+}
 
 interface PipelineBuilderProps {
   project: Project;
+  modelCatalog: ModelCatalog;
   onUpdateProject: (updated: Project) => void;
   onLaunchStudio: () => void;
   onBackToProjects?: () => void;
@@ -20,10 +30,21 @@ interface PipelineBuilderProps {
 
 export const PipelineBuilder: React.FC<PipelineBuilderProps> = ({
   project,
+  modelCatalog,
   onUpdateProject,
   onLaunchStudio,
   onBackToProjects,
 }) => {
+  const projectModel = project.model || modelCatalog.defaultModel;
+
+  const handleUpdateStepModel = (stepId: string, model: string | null) => {
+    onUpdateProject({
+      ...project,
+      steps: project.steps.map((s) => (s.id === stepId ? { ...s, model } : s)),
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
   // Move step up or down
   const handleMoveStep = (index: number, direction: 'up' | 'down') => {
     const newSteps = [...project.steps];
@@ -166,7 +187,11 @@ export const PipelineBuilder: React.FC<PipelineBuilderProps> = ({
         {project.steps.map((step, index) => {
           const isFirst = index === 0;
           const isLast = index === project.steps.length - 1;
-          const isFinal = index === project.steps.length - 1 || step.isFinalBlogStep;
+          // Same rule the studio uses: the flagged step, otherwise the last one.
+          const finalStepId = (project.steps.find((s) => s.isFinalBlogStep) || project.steps[project.steps.length - 1])?.id;
+          const isFinal = step.id === finalStepId;
+          const finalNotLast = isFinal && !isLast;
+          const guidelineDoc = looksLikeGuidelineDocument(step.promptTemplate);
 
           return (
             <div
@@ -245,6 +270,16 @@ export const PipelineBuilder: React.FC<PipelineBuilderProps> = ({
 
               {/* Direct Prompt Box */}
               <div className="p-4 space-y-2">
+                <div className="flex flex-wrap items-center gap-2 pb-1">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Model</span>
+                  <ModelSelect
+                    catalog={modelCatalog}
+                    value={step.model}
+                    onChange={(m) => handleUpdateStepModel(step.id, m)}
+                    inheritLabel={projectModel ? `Project model (${modelName(projectModel)})` : 'Project model'}
+                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600"
+                  />
+                </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     Write Prompt for this Step:
@@ -279,6 +314,39 @@ export const PipelineBuilder: React.FC<PipelineBuilderProps> = ({
                   placeholder="e.g. Analyze the user's topic and generate 3 compelling hooks and an outline for the blog post."
                   className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/60 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 leading-relaxed resize-y"
                 />
+
+                {guidelineDoc && (
+                  <div className="flex gap-2 p-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 text-[11px] text-amber-800 dark:text-amber-200">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <p>
+                      This looks like a guideline document, not a step instruction. The AI will reply to it ("Understood…")
+                      instead of working on your blog. Move it to <strong>Project settings → Client Guidelines</strong>, which applies
+                      it to every step and the QA review, and delete this step.
+                    </p>
+                  </div>
+                )}
+
+                {finalNotLast && (
+                  <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 text-[11px] text-amber-800 dark:text-amber-200">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span className="flex-1 min-w-0">
+                      The Final blog page shows this step's output, but {project.steps.length - index - 1} step(s) run after it.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateProject({
+                          ...project,
+                          steps: project.steps.map((s, i) => ({ ...s, isFinalBlogStep: i === project.steps.length - 1 })),
+                          updatedAt: new Date().toISOString(),
+                        })
+                      }
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      Use the last step as the final blog
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           );

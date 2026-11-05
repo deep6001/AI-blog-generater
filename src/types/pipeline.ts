@@ -7,6 +7,8 @@ export interface PipelineStep {
   temperature?: number;
   isEnabled?: boolean;
   isFinalBlogStep?: boolean;
+  /** "provider:model" override for this step; empty uses the project model. */
+  model?: string | null;
 }
 
 export interface Project {
@@ -21,6 +23,8 @@ export interface Project {
   referenceUrls?: string[];
   /** Client guideline profile applied to every step and to the QA review. */
   guidelineProfileId?: string | null;
+  /** "provider:model" for every step unless a step overrides it; empty uses the server default. */
+  model?: string | null;
   createdAt: string;
   updatedAt: string;
   steps: PipelineStep[];
@@ -98,6 +102,7 @@ export interface GuidelineProfile {
 export type PublicationVerdict =
   | 'Ready to Publish'
   | 'Ready to Publish After Minor Changes'
+  | 'Requires Substantial Revision'
   | 'Not Ready to Publish Yet';
 
 export interface QaReview {

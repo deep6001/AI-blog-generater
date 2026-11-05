@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Project, GuidelineProfile } from '../types/pipeline';
 import { Settings2, Save, X, BookMarked } from 'lucide-react';
+import { ModelCatalog, modelName } from '../services/models';
+import { ModelSelect } from './ModelSelect';
 
 interface ProjectSettingsModalProps {
   project: Project | null;
@@ -8,21 +10,24 @@ interface ProjectSettingsModalProps {
   onClose: () => void;
   onSave: (updated: Project) => void;
   guidelineProfiles: GuidelineProfile[];
+  modelCatalog: ModelCatalog;
   canManageGuidelines: boolean;
   onManageGuidelines: () => void;
 }
 
-export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
+// Hooks live in the form so they run on every render; the wrapper only decides whether to show it.
+export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = (props) =>
+  props.isOpen && props.project ? <ProjectSettingsForm key={props.project.id} {...props} project={props.project} /> : null;
+
+const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Project }> = ({
   project,
-  isOpen,
   onClose,
   onSave,
   guidelineProfiles,
+  modelCatalog,
   canManageGuidelines,
   onManageGuidelines,
 }) => {
-  if (!isOpen || !project) return null;
-
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
   const [targetAudience, setTargetAudience] = useState(project.targetAudience);
@@ -30,6 +35,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
   const [targetWordCount, setTargetWordCount] = useState(project.targetWordCount);
   const [referenceUrls, setReferenceUrls] = useState((project.referenceUrls || []).join('\n'));
   const [guidelineProfileId, setGuidelineProfileId] = useState(project.guidelineProfileId || '');
+  const [model, setModel] = useState<string | null>(project.model || null);
 
   useEffect(() => {
     if (project) {
@@ -40,6 +46,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
       setTargetWordCount(project.targetWordCount);
       setReferenceUrls((project.referenceUrls || []).join('\n'));
       setGuidelineProfileId(project.guidelineProfileId || '');
+      setModel(project.model || null);
     }
   }, [project]);
 
@@ -57,6 +64,7 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
         .map((u) => u.trim())
         .filter((u) => /^https?:\/\/\S+$/i.test(u)),
       guidelineProfileId: guidelineProfileId || null,
+      model,
       updatedAt: new Date().toISOString(),
     });
     onClose();
@@ -146,6 +154,24 @@ export const ProjectSettingsModal: React.FC<ProjectSettingsModalProps> = ({
               onChange={(e) => setTargetWordCount(parseInt(e.target.value, 10))}
               className="w-full accent-indigo-600"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              AI Model
+            </label>
+            <ModelSelect
+              catalog={modelCatalog}
+              value={model}
+              onChange={setModel}
+              inheritLabel={
+                modelCatalog.defaultModel ? `Server default (${modelName(modelCatalog.defaultModel)})` : 'Server default'
+              }
+              className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600"
+            />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+              Used for research, every step and the QA review. Individual steps can override it.
+            </p>
           </div>
 
           <div>

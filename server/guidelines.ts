@@ -1,4 +1,4 @@
-import type { GoogleGenAI } from '@google/genai';
+import { webSearch, type ModelInfo, type Usage } from './llm';
 import type { GuidelineProfile, PublicationVerdict } from '../src/types/pipeline';
 
 export type GuidelineInput = Pick<
@@ -19,6 +19,7 @@ export type GuidelineInput = Pick<
 
 export const VERDICTS: PublicationVerdict[] = [
   'Ready to Publish After Minor Changes',
+  'Requires Substantial Revision',
   'Not Ready to Publish Yet',
   'Ready to Publish',
 ];
@@ -61,7 +62,7 @@ ${p.referenceRules.trim()}`;
 export function qaPrompt(article: string, p: GuidelineInput, sourceUrls: string[]): string {
   const scale = p.scoreScale;
   return `You are the senior QA editor and medical reference checker for a UK private medical practice blog (client profile: ${p.name}).
-Review the article below. Use Google Search to verify references, guidance and any fact that may have changed. Be explicit about anything you could not verify. Never invent references, details or completed checks.
+Review the article below. Use web search to verify references, guidance and any fact that may have changed. Be explicit about anything you could not verify. Never invent references, details or completed checks.
 
 ## Client checklist
 ${p.qaChecklist.trim()}
@@ -76,7 +77,7 @@ ${sourceUrls.length ? `\nThe writer's research found these sources (already chec
 
 ## Output format (Markdown, UK English, follow exactly)
 Start with these three lines exactly, nothing before them:
-VERDICT: <one of: Ready to Publish | Ready to Publish After Minor Changes | Not Ready to Publish Yet>
+VERDICT: <one of: Ready to Publish | Ready to Publish After Minor Changes | Requires Substantial Revision | Not Ready to Publish Yet>
 SCORE: <number>/${scale}
 SCORE_AFTER: <expected score after the corrections below>/${scale}
 
@@ -102,7 +103,7 @@ Essential, directly relevant UK guidance that is missing, or "None."
 
 ## Exact Corrections
 Work through the article in its original order.
-| Section | Current Text | Corrected Text | Type |
+| Location (section and paragraph) | Current Text | Corrected Text | Type |
 Type is "Essential" (factual, safety, reference, client rule) or "Optional" (editorial). Include rewrites of any impersonal opening and impersonal subheadings in the client's warm "you" style. Quote current text exactly.
 
 ## Replacement Reference Options
@@ -125,7 +126,7 @@ export interface QaResult {
   scoreAfter?: number;
   scoreScale: number;
   createdAt: string;
-  tokenUsage: { promptTokens: number; candidatesTokens: number; totalTokens: number };
+  tokenUsage: Usage;
 }
 
 export function parseQaHeader(text: string, scale: number): Pick<QaResult, 'verdict' | 'score' | 'scoreAfter'> {
@@ -141,37 +142,24 @@ export function parseQaHeader(text: string, scale: number): Pick<QaResult, 'verd
 }
 
 export async function runQaReview(
-  ai: GoogleGenAI,
-  model: string,
+  info: ModelInfo,
   article: string,
   profile: GuidelineInput,
   sourceUrls: string[],
-  withTimeout: <T>(p: Promise<T>, ms: number, msg: string) => Promise<T>,
   timeoutMs: number
 ): Promise<QaResult> {
-  const response = await withTimeout(
-    ai.models.generateContent({
-      model,
-      contents: qaPrompt(article, profile, sourceUrls),
-      config: { tools: [{ googleSearch: {} }], temperature: 0.2 },
-    }),
-    timeoutMs,
-    `QA review timed out after ${timeoutMs / 1000} seconds`
-  );
-
-  const review = (response.text || '').trim();
+  const { text, usage } = await webSearch(info, qaPrompt(article, profile, sourceUrls), {
+    signal: AbortSignal.timeout(timeoutMs),
+    insertMarkers: false,
+  });
+  const review = text.trim();
   if (!review) throw new Error('The QA review came back empty. Please retry.');
 
-  const usage = response.usageMetadata;
   return {
     review,
     ...parseQaHeader(review, profile.scoreScale),
     scoreScale: profile.scoreScale,
     createdAt: new Date().toISOString(),
-    tokenUsage: {
-      promptTokens: usage?.promptTokenCount || 0,
-      candidatesTokens: usage?.candidatesTokenCount || 0,
-      totalTokens: usage?.totalTokenCount || 0,
-    },
+    tokenUsage: usage,
   };
 }

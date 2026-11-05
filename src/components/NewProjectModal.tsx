@@ -9,13 +9,11 @@ interface NewProjectModalProps {
   onCreateProject: (project: Project) => void;
 }
 
-export const NewProjectModal: React.FC<NewProjectModalProps> = ({
-  isOpen,
-  onClose,
-  onCreateProject,
-}) => {
-  if (!isOpen) return null;
+// Hooks live in the form so they run on every render; the wrapper only decides whether to show it.
+export const NewProjectModal: React.FC<NewProjectModalProps> = (props) =>
+  props.isOpen ? <NewProjectForm {...props} /> : null;
 
+const NewProjectForm: React.FC<NewProjectModalProps> = ({ onClose, onCreateProject }) => {
   const [projectName, setProjectName] = useState('My Blog Project');
   const [templateType, setTemplateType] = useState<'prostate-clinic' | 'standard' | 'blank'>('standard');
 

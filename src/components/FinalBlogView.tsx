@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { GuidelineProfile, Project, RunSession } from '../types/pipeline';
 import { QaReviewPanel } from './QaReviewPanel';
+import { ModelCatalog } from '../services/models';
 import {
   calculateBlogMetrics,
   generateMedicalHtmlDocument,
-  generateWordDocContent,
   generatePlainTextDocument,
 } from '../utils/pipeline';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -34,6 +34,7 @@ interface FinalBlogViewProps {
   project: Project;
   session: RunSession;
   guidelines: GuidelineProfile | null;
+  modelCatalog: ModelCatalog;
   onUpdateSession: (session: RunSession) => void;
   onBackToStudio: () => void;
   onUpdateSessionBlog: (newBlogContent: string) => void;
@@ -43,6 +44,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
   project,
   session,
   guidelines,
+  modelCatalog,
   onUpdateSession,
   onBackToStudio,
   onUpdateSessionBlog,
@@ -105,10 +107,23 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
     downloadFile(html, filename, 'text/html;charset=utf-8');
   };
 
-  const handleDownloadWordDoc = () => {
-    const filename = `${(project.name || 'medical-blog').toLowerCase().replace(/[^a-z0-9]/g, '-')}-clinical-document.doc`;
-    const docHtml = generateWordDocContent(project.name, editableBlog, project);
-    downloadFile(docHtml, filename, 'application/msword;charset=utf-8');
+  const [docxError, setDocxError] = useState<string | null>(null);
+  const handleDownloadWordDoc = async () => {
+    setDocxError(null);
+    try {
+      // Loaded on demand: the docx library is large and only needed here.
+      const { markdownToDocxBlob, docxFileName } = await import('../utils/docxExport');
+      const blob = await markdownToDocxBlob(editableBlog, session.userInput || project.name);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = docxFileName(editableBlog, session.userInput || project.name);
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err: any) {
+      console.error('DOCX export failed:', err);
+      setDocxError(`Could not create the Word file: ${err?.message || err}`);
+    }
   };
 
   const handleDownloadPlainText = () => {
@@ -284,6 +299,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
         session={session}
         article={editableBlog}
         guidelines={guidelines}
+        model={project.model || modelCatalog.defaultModel}
         onUpdateSession={onUpdateSession}
       />
 
@@ -394,7 +410,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
                     className="w-full text-left px-3.5 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-700/60 flex items-center justify-between text-slate-800 dark:text-slate-200"
                   >
                     <div>
-                      <div className="font-bold">Microsoft Word (.doc)</div>
+                      <div className="font-bold">Microsoft Word (.docx)</div>
                       <div className="text-[11px] text-slate-500">Document formatted for Word & Google Docs</div>
                     </div>
                   </button>
@@ -413,6 +429,12 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
             </div>
           </div>
         </div>
+
+        {docxError && (
+          <div className="mx-5 mt-4 p-3 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-xs text-rose-700 dark:text-rose-300">
+            {docxError}
+          </div>
+        )}
 
         {/* Content Body */}
         <div className="p-6 sm:p-10">

@@ -26,23 +26,25 @@ export function interpolatePrompt(
     variables.previous_step_output = variables.previous_step;
   }
 
-  let hasReplacedAny = false;
-  for (const [key, val] of Object.entries(variables)) {
-    const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
-    if (regex.test(result)) {
-      result = result.replace(regex, val ?? '');
-      hasReplacedAny = true;
-    }
-  }
+  const placeholder = (name: string, flags?: string) => new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, flags);
+  const usesTopic = ['input', 'user_input'].some((n) => placeholder(n).test(template)) || /\[(blog )?topic\]/i.test(template);
+  const usesPrevious =
+    ['previous_step', 'previous_step_output'].some((n) => placeholder(n).test(template)) ||
+    placeholder('step_\\d+_output').test(template);
 
-  // If the user wrote a simple prompt without variables like "Write an outline",
-  // gracefully append the user input or previous step context so it works automatically!
-  if (!hasReplacedAny) {
-    if (variables.previous_step) {
-      result = `${result}\n\nContext from previous step:\n${variables.previous_step}`;
-    } else if (variables.input) {
-      result = `${result}\n\nTopic / Input:\n${variables.input}`;
-    }
+  for (const [key, val] of Object.entries(variables)) {
+    result = result.replace(placeholder(key, 'g'), val ?? '');
+  }
+  // Plain-English placeholders people type into prompts, e.g. "Write about [BLOG TOPIC]".
+  if (variables.input) result = result.replace(/\[(blog )?topic\]/gi, variables.input);
+
+  // A prompt that doesn't reference the topic or the previous step still gets both,
+  // otherwise later steps lose the subject of the blog.
+  if (!usesTopic && variables.input) {
+    result += `\n\nBlog topic:\n${variables.input}`;
+  }
+  if (!usesPrevious && variables.previous_step) {
+    result += `\n\nOutput of the previous step (build on it):\n${variables.previous_step}`;
   }
 
   return result;

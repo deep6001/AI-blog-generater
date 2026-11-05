@@ -86,12 +86,13 @@ export function guidelinePayload(p: GuidelineProfile) {
 export async function requestQaReview(
   article: string,
   profile: GuidelineProfile,
-  sourceUrls: string[]
+  sourceUrls: string[],
+  model?: string | null
 ): Promise<QaReview & { model: string }> {
   const response = await fetch('/api/qa-review', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ article, guidelines: guidelinePayload(profile), sourceUrls }),
+    body: JSON.stringify({ article, guidelines: guidelinePayload(profile), sourceUrls, model: model || undefined }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `QA review failed (HTTP ${response.status})`);

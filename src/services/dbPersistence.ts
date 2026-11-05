@@ -26,6 +26,7 @@ function projectToRow(userId: string, tenantId: string, p: Project) {
     tags: p.tags || [],
     reference_urls: p.referenceUrls || [],
     guideline_profile_id: p.guidelineProfileId ?? null,
+    model: p.model ?? null,
     steps: p.steps || [],
     created_at: p.createdAt,
   };
@@ -42,6 +43,7 @@ function rowToProject(r: any): Project {
     tags: r.tags || [],
     referenceUrls: r.reference_urls || [],
     guidelineProfileId: r.guideline_profile_id ?? null,
+    model: r.model ?? null,
     steps: r.steps || [],
     createdAt: r.created_at,
     updatedAt: r.updated_at,

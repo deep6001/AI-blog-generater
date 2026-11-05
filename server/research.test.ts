@@ -23,3 +23,9 @@ test('researchContext lists every source with its number and exact URL', () => {
   assert.match(ctx, /\[2\] PubMed\./);
   assert.match(ctx, /2026-10-31/);
 });
+
+test('stripTracking removes utm parameters but keeps real ones', async () => {
+  const { stripTracking } = await import('./llm');
+  assert.equal(stripTracking('https://www.nhs.uk/tests/colposcopy/?utm_source=openai'), 'https://www.nhs.uk/tests/colposcopy/');
+  assert.equal(stripTracking('https://pubmed.ncbi.nlm.nih.gov/?term=x&utm_medium=a'), 'https://pubmed.ncbi.nlm.nih.gov/?term=x');
+});

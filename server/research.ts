@@ -1,11 +1,6 @@
-import type { GoogleGenAI, GenerateContentResponse } from '@google/genai';
+import { addUsage, readUrls, webSearch, type ModelInfo, type Usage, type WebSource } from './llm';
 
-export interface ResearchSource {
-  id: number;
-  title: string;
-  url: string;
-  domain: string;
-}
+export type ResearchSource = WebSource;
 
 export interface ResearchInput {
   topic: string;
@@ -23,68 +18,9 @@ export interface ResearchResult {
   sources: ResearchSource[];
   searchQueries: string[];
   createdAt: string;
-  tokenUsage: { promptTokens: number; candidatesTokens: number; totalTokens: number };
-}
-
-const RESOLVE_TIMEOUT_MS = 5000;
-
-/** Google Search grounding returns short-lived redirect links; follow one hop to get the publisher URL. */
-async function resolveRedirect(uri: string): Promise<string> {
-  if (!uri.includes('grounding-api-redirect')) return uri;
-  try {
-    const res = await fetch(uri, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS) });
-    return res.headers.get('location') || uri;
-  } catch {
-    return uri;
-  }
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-}
-
-/** Turns grounding chunks into a numbered, de-duplicated source list and inserts [n] markers into the text. */
-async function buildCitedBrief(response: GenerateContentResponse): Promise<{ brief: string; sources: ResearchSource[] }> {
-  const text = response.text || '';
-  const meta = response.candidates?.[0]?.groundingMetadata;
-  const chunks = meta?.groundingChunks || [];
-
-  const resolved = await Promise.all(chunks.map((c) => (c.web?.uri ? resolveRedirect(c.web.uri) : Promise.resolve(''))));
-
-  const sources: ResearchSource[] = [];
-  const chunkToSource = new Map<number, number>();
-  resolved.forEach((url, i) => {
-    if (!url) return;
-    let source = sources.find((s) => s.url === url);
-    if (!source) {
-      const domain = hostOf(url) || chunks[i].web?.title || '';
-      source = { id: sources.length + 1, url, domain, title: chunks[i].web?.title || domain };
-      sources.push(source);
-    }
-    chunkToSource.set(i, source.id);
-  });
-
-  // Insert from the end so earlier positions stay valid.
-  let brief = text;
-  const supports = [...(meta?.groundingSupports || [])].sort(
-    (a, b) => (b.segment?.endIndex ?? 0) - (a.segment?.endIndex ?? 0)
-  );
-  for (const support of supports) {
-    const segmentText = support.segment?.text;
-    if (!segmentText) continue;
-    const ids = [...new Set((support.groundingChunkIndices || []).map((i) => chunkToSource.get(i)).filter(Boolean))];
-    if (ids.length === 0) continue;
-    const at = brief.lastIndexOf(segmentText);
-    if (at < 0) continue;
-    const end = at + segmentText.length;
-    brief = brief.slice(0, end) + ids.map((id) => `[${id}]`).join('') + brief.slice(end);
-  }
-
-  return { brief, sources };
+  tokenUsage: Usage;
+  /** Set when the reference articles could not be read; research still succeeded. */
+  styleNotesError?: string;
 }
 
 function researchPrompt({ topic, audience, tone, allowedDomains }: ResearchInput): string {
@@ -92,7 +28,7 @@ function researchPrompt({ topic, audience, tone, allowedDomains }: ResearchInput
     ? `
 The client only accepts references from: ${allowedDomains.join(', ')}. Find evidence on those sites wherever possible.`
     : '';
-  return `Research this blog topic using Google Search before answering: "${topic}"
+  return `Research this blog topic using web search before answering: "${topic}"
 Readers: ${audience || 'general readers'}. Tone of the final article: ${tone || 'clear and practical'}.
 
 Produce a research brief in Markdown that a writer will rely on. Use only what you find in search results.
@@ -130,61 +66,35 @@ Be concrete and brief. Bullet points only.`;
 }
 
 export async function runResearch(
-  ai: GoogleGenAI,
-  model: string,
+  info: ModelInfo,
   input: ResearchInput,
-  withTimeout: <T>(p: Promise<T>, ms: number, msg: string) => Promise<T>,
   timeoutMs: number
 ): Promise<ResearchResult> {
   const referenceUrls = (input.referenceUrls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 10);
+  const timeout = () => AbortSignal.timeout(timeoutMs);
 
-  const searchCall = withTimeout(
-    ai.models.generateContent({
-      model,
-      contents: researchPrompt(input),
-      config: { tools: [{ googleSearch: {} }], temperature: 0.2 },
-    }),
-    timeoutMs,
-    `Web research timed out after ${timeoutMs / 1000} seconds`
-  );
+  // Style notes are a nice-to-have: a slow or blocked reference page must not sink the research.
+  const [search, style] = await Promise.allSettled([
+    webSearch(info, researchPrompt(input), { allowedDomains: input.allowedDomains, signal: timeout() }),
+    referenceUrls.length ? readUrls(info, stylePrompt(referenceUrls), timeout()) : Promise.resolve(null),
+  ]);
 
-  const styleCall = referenceUrls.length
-    ? withTimeout(
-        ai.models.generateContent({
-          model,
-          contents: stylePrompt(referenceUrls),
-          config: { tools: [{ urlContext: {} }], temperature: 0.2 },
-        }),
-        timeoutMs,
-        `Reading reference articles timed out after ${timeoutMs / 1000} seconds`
-      )
-    : Promise.resolve(null);
-
-  const [searchRes, styleRes] = await Promise.all([searchCall, styleCall]);
-  const { brief, sources } = await buildCitedBrief(searchRes);
-
+  if (search.status === 'rejected') throw search.reason;
+  const { text: brief, sources, searchQueries, usage } = search.value;
   if (!brief.trim()) throw new Error('Web research returned an empty brief.');
   if (sources.length === 0) throw new Error('Web research found no sources for this topic. Try rephrasing it.');
 
-  const usage = [searchRes, styleRes].reduce(
-    (acc, r) => {
-      if (!r?.usageMetadata) return acc;
-      acc.promptTokens += r.usageMetadata.promptTokenCount || 0;
-      acc.candidatesTokens += r.usageMetadata.candidatesTokenCount || 0;
-      acc.totalTokens += r.usageMetadata.totalTokenCount || 0;
-      return acc;
-    },
-    { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 }
-  );
-
+  const styleValue = style.status === 'fulfilled' ? style.value : null;
   return {
     topic: input.topic,
     brief,
-    styleNotes: styleRes?.text?.trim() || undefined,
+    styleNotes: styleValue?.text.trim() || undefined,
+    styleNotesError:
+      style.status === 'rejected' ? `Reference articles could not be read: ${style.reason?.message || style.reason}` : undefined,
     sources,
-    searchQueries: searchRes.candidates?.[0]?.groundingMetadata?.webSearchQueries || [],
+    searchQueries,
     createdAt: new Date().toISOString(),
-    tokenUsage: usage,
+    tokenUsage: addUsage(usage, styleValue?.usage),
   };
 }
 

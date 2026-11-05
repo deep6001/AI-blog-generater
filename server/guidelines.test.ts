@@ -33,11 +33,23 @@ test('guidelinesContext includes client limits and short Harvard format', () => 
   const ctx = guidelinesContext({ ...profile, allowedDomains: ['nhs.uk', 'nice.org.uk'], referenceCount: 5 });
   assert.match(ctx, /only come from these domains: nhs\.uk, nice\.org\.uk/);
   assert.match(ctx, /No DOI links, no accessed dates/);
-  assert.match(ctx, /Key Takeaways, if used, go at the END/);
+  assert.match(ctx, /Myth vs Fact, Key Takeaways, FAQs, Final Thoughts, References/);
 });
 
 test('qaPrompt asks for the right scale and the reference mix', () => {
   const prompt = qaPrompt('# Article', { ...profile, scoreScale: 10 }, []);
   assert.match(prompt, /SCORE: <number>\/10/);
   assert.match(prompt, /2 MDPI, 2 PMC, 2 PubMed, 2 ScienceDirect/);
+});
+
+test('parseQaHeader recognises "Requires Substantial Revision"', () => {
+  assert.equal(parseQaHeader('VERDICT: Requires Substantial Revision', 100).verdict, 'Requires Substantial Revision');
+});
+
+test('default QA checklist enforces the strict whole-blog pass and end sequence', () => {
+  const prompt = qaPrompt('# Article', profile, []);
+  assert.match(prompt, /Never give 100\/100 just because earlier corrections were applied/);
+  assert.match(prompt, /Myth vs Fact -> Key Takeaways -> FAQs -> Final Thoughts -> References/);
+  assert.match(prompt, /NO "Key Takeaways" at the beginning/);
+  assert.match(prompt, /Location \(section and paragraph\)/);
 });

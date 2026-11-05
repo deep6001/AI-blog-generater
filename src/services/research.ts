@@ -4,8 +4,9 @@ import { Project, ResearchPack } from '../types/pipeline';
 export async function fetchResearch(
   project: Project,
   topic: string,
-  allowedDomains: string[] = []
-): Promise<ResearchPack & { model: string }> {
+  allowedDomains: string[] = [],
+  model?: string | null
+): Promise<ResearchPack & { model: string; styleNotesError?: string }> {
   const response = await fetch('/api/research', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -15,6 +16,7 @@ export async function fetchResearch(
       tone: project.tone,
       referenceUrls: project.referenceUrls || [],
       allowedDomains,
+      model: model || undefined,
     }),
   });
   const data = await response.json().catch(() => ({}));

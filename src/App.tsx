@@ -15,6 +15,7 @@ import { TenantSwitcherModal } from './components/TenantSwitcherModal';
 import { GuidelinesModal } from './components/GuidelinesModal';
 import { loadGuidelineProfiles } from './services/guidelines';
 import { GuidelineProfile } from './types/pipeline';
+import { EMPTY_CATALOG, fetchModelCatalog, ModelCatalog } from './services/models';
 import {
   loadUserProjects,
   saveAllUserProjects,
@@ -70,6 +71,7 @@ function MainAppContent() {
   const [editingSettingsProject, setEditingSettingsProject] = useState<Project | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [guidelineProfiles, setGuidelineProfiles] = useState<GuidelineProfile[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalog>(EMPTY_CATALOG);
   const [isGuidelinesOpen, setIsGuidelinesOpen] = useState(false);
 
   useEffect(() => {
@@ -226,6 +228,9 @@ function MainAppContent() {
       .catch((err) => {
         console.warn('Backend health check note:', err);
       });
+    fetchModelCatalog()
+      .then(setModelCatalog)
+      .catch((err) => console.warn('Could not load model list:', err));
   }, []);
 
   const activeProject = projects.find((p) => p.id === activeProjectId) || null;
@@ -405,6 +410,7 @@ function MainAppContent() {
             {activeTab === 'pipeline' && (
               <PipelineBuilder
                 project={activeProject}
+                modelCatalog={modelCatalog}
                 onUpdateProject={handleUpdateProject}
                 onLaunchStudio={() => setActiveTab('studio')}
                 onBackToProjects={() => setActiveProjectId(null)}
@@ -416,6 +422,7 @@ function MainAppContent() {
                 project={activeProject}
                 currentSession={getOrCreateSession(activeProject.id)}
                 guidelines={activeGuidelines}
+                modelCatalog={modelCatalog}
                 onUpdateSession={handleUpdateSession}
                 onViewFinalBlog={() => setActiveTab('output')}
               />
@@ -426,6 +433,7 @@ function MainAppContent() {
                 project={activeProject}
                 session={getOrCreateSession(activeProject.id)}
                 guidelines={activeGuidelines}
+                modelCatalog={modelCatalog}
                 onUpdateSession={handleUpdateSession}
                 onBackToStudio={() => setActiveTab('studio')}
                 onUpdateSessionBlog={(newBlog) => {
@@ -456,6 +464,7 @@ function MainAppContent() {
         onClose={() => setEditingSettingsProject(null)}
         onSave={handleUpdateProject}
         guidelineProfiles={guidelineProfiles}
+        modelCatalog={modelCatalog}
         canManageGuidelines={Boolean(user && tenantId)}
         onManageGuidelines={() => setIsGuidelinesOpen(true)}
       />
