@@ -3,6 +3,7 @@ import { Project, RunSession, StepOutputRecord, ChatMessage, TokenUsage, Researc
 import { guidelinePayload } from '../services/guidelines';
 import { ModelCatalog, modelName } from '../services/models';
 import { useAuth } from '../context/AuthContext';
+import { apiFetch } from '../lib/supabase';
 import { fetchResearch, saveResearchRun } from '../services/research';
 import {
   interpolatePrompt,
@@ -272,7 +273,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
     while (attempts < 2) {
       attempts++;
       try {
-        const response = await fetch('/api/generate-step', {
+        const response = await apiFetch('/api/generate-step', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -733,7 +734,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
     });
 
     try {
-      const response = await fetch('/api/chat-refine', {
+      const response = await apiFetch('/api/chat-refine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -987,6 +988,13 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
             placeholder="Type your blog topic, core idea, outline notes, or brief here... (e.g., 'Why Rust and WebAssembly are revolutionizing Cloud Infrastructure in 2026')"
             className="w-full text-sm px-4 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 leading-relaxed resize-y"
           />
+
+          {!user && (
+            <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              You are browsing as a guest. Sign in to run research, generation and QA.
+            </p>
+          )}
 
           {!inputTopic.trim() && (
             <p className="text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5">

@@ -12,6 +12,7 @@ const { availableProviders, defaultModelRef, describeModelError, generate, listM
 const { runResearch, researchContext, findUnverifiedUrls } = await import('./server/research');
 const { guidelinesContext, runQaReview } = await import('./server/guidelines');
 const { summariseSampleDocx } = await import('./server/sampleDoc');
+const { requireUser } = await import('./server/auth');
 type ModelInfo = import('./server/llm').ModelInfo;
 type GuidelineInput = import('./server/guidelines').GuidelineInput;
 
@@ -86,7 +87,7 @@ async function modelOrError(res: express.Response, ref: unknown, where: string):
 }
 
 // Approved sample article (.docx): describe its layout so blogs can follow it
-app.post('/api/sample-docx', express.raw({ type: 'application/octet-stream', limit: '15mb' }), (req, res) => {
+app.post('/api/sample-docx', requireUser, express.raw({ type: 'application/octet-stream', limit: '15mb' }), (req, res) => {
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
     res.status(400).json({ error: 'Upload a .docx file.' });
     return;
@@ -99,7 +100,7 @@ app.post('/api/sample-docx', express.raw({ type: 'application/octet-stream', lim
 });
 
 // Web research: provider web search for cited facts, plus reference articles for house style
-app.post('/api/research', async (req, res) => {
+app.post('/api/research', requireUser, async (req, res) => {
   const { topic, audience, tone, referenceUrls, allowedDomains, model } = req.body;
   if (!topic || typeof topic !== 'string') {
     res.status(400).json({ error: 'Missing topic parameter.' });
@@ -126,7 +127,7 @@ app.post('/api/research', async (req, res) => {
   }
 });
 
-app.post('/api/generate-step', async (req, res) => {
+app.post('/api/generate-step', requireUser, async (req, res) => {
   const { prompt, systemInstruction, temperature = 0.7, research, guidelines, targetWordCount, model } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     res.status(400).json({ error: 'Missing prompt parameter.' });
@@ -169,7 +170,7 @@ app.post('/api/generate-step', async (req, res) => {
 });
 
 // Full start-to-finish QA and reference check against the client's guideline profile
-app.post('/api/qa-review', async (req, res) => {
+app.post('/api/qa-review', requireUser, async (req, res) => {
   const { article, guidelines, sourceUrls, model } = req.body;
   if (!article || typeof article !== 'string') {
     res.status(400).json({ error: 'Missing article to review.' });
@@ -192,7 +193,7 @@ app.post('/api/qa-review', async (req, res) => {
   }
 });
 
-app.post('/api/chat-refine', async (req, res) => {
+app.post('/api/chat-refine', requireUser, async (req, res) => {
   const { stepTitle, currentOutput, userMessage, systemRole, model } = req.body;
   if (!currentOutput || !userMessage) {
     res.status(400).json({ error: 'currentOutput and userMessage are required.' });

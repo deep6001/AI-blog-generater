@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { apiFetch, supabase } from '../lib/supabase';
 import { GuidelineProfile, QaReview } from '../types/pipeline';
 
 function rowToProfile(r: any): GuidelineProfile {
@@ -99,7 +99,7 @@ export interface SampleSummary {
 
 /** Sends a sample .docx to the server, which describes its layout and styling. */
 export async function analyseSampleDocx(file: File): Promise<SampleSummary> {
-  const res = await fetch('/api/sample-docx', {
+  const res = await apiFetch('/api/sample-docx', {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: await file.arrayBuffer(),
@@ -115,7 +115,7 @@ export async function requestQaReview(
   sourceUrls: string[],
   model?: string | null
 ): Promise<QaReview & { model: string }> {
-  const response = await fetch('/api/qa-review', {
+  const response = await apiFetch('/api/qa-review', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ article, guidelines: guidelinePayload(profile), sourceUrls, model: model || undefined }),

@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { apiFetch, supabase } from '../lib/supabase';
 import { Project, ResearchPack } from '../types/pipeline';
 
 export async function fetchResearch(
@@ -7,7 +7,7 @@ export async function fetchResearch(
   allowedDomains: string[] = [],
   model?: string | null
 ): Promise<ResearchPack & { model: string; styleNotesError?: string }> {
-  const response = await fetch('/api/research', {
+  const response = await apiFetch('/api/research', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
