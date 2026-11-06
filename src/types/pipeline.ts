@@ -80,6 +80,18 @@ export interface ResearchPack {
 
 export type ReferenceStyle = 'harvard_short' | 'harvard_full';
 
+export interface SampleStyle {
+  font: string;
+  bodySize: number;
+  h1Size: number;
+  h2Size: number;
+  h3Size: number;
+  headingColor: string;
+  marginMm: number;
+  pageWidthMm: number;
+  pageHeightMm: number;
+}
+
 export interface GuidelineProfile {
   id: string;
   name: string;
@@ -95,6 +107,11 @@ export interface GuidelineProfile {
   minWordCount: number;
   cta: string;
   internalLinks: string;
+  /** Approved sample article used as the layout template. */
+  sampleName?: string | null;
+  sampleOutline?: string | null;
+  sampleWordCount?: number | null;
+  sampleStyle?: SampleStyle | null;
   createdAt: string;
   updatedAt: string;
 }

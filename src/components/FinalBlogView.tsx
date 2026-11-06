@@ -113,7 +113,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
     try {
       // Loaded on demand: the docx library is large and only needed here.
       const { markdownToDocxBlob, docxFileName } = await import('../utils/docxExport');
-      const blob = await markdownToDocxBlob(editableBlog, session.userInput || project.name);
+      const blob = await markdownToDocxBlob(editableBlog, session.userInput || project.name, guidelines?.sampleStyle);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

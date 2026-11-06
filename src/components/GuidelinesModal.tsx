@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { GuidelineProfile } from '../types/pipeline';
 import { createDefaultGuidelineProfile } from '../utils/guidelines';
-import { createGuidelineProfile, deleteGuidelineProfile, updateGuidelineProfile } from '../services/guidelines';
-import { BookMarked, Copy, Loader2, Plus, Save, Trash2, X } from 'lucide-react';
+import { analyseSampleDocx, createGuidelineProfile, deleteGuidelineProfile, updateGuidelineProfile } from '../services/guidelines';
+import { BookMarked, Copy, FileText, Loader2, Plus, Save, Trash2, Upload, X } from 'lucide-react';
 
 interface GuidelinesModalProps {
   isOpen: boolean;
@@ -87,6 +87,31 @@ export const GuidelinesModal: React.FC<GuidelinesModalProps> = ({
 
   const set = <K extends keyof GuidelineProfile>(key: K, value: GuidelineProfile[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
+
+  const handleSampleFile = (file: File | undefined) => {
+    if (!file) return;
+    if (!/\.docx$/i.test(file.name)) {
+      setError('Choose a Word .docx file.');
+      return;
+    }
+    run(async () => {
+      const summary = await analyseSampleDocx(file);
+      setDraft((d) =>
+        d
+          ? {
+              ...d,
+              sampleName: file.name,
+              sampleOutline: summary.outline,
+              sampleWordCount: summary.wordCount,
+              sampleStyle: summary.style,
+            }
+          : d
+      );
+    });
+  };
+
+  const clearSample = () =>
+    setDraft((d) => (d ? { ...d, sampleName: null, sampleOutline: null, sampleWordCount: null, sampleStyle: null } : d));
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
@@ -231,6 +256,59 @@ export const GuidelinesModal: React.FC<GuidelinesModalProps> = ({
                       onChange={(e) => set('internalLinks', e.target.value)}
                     />
                   </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        Sample article template (.docx)
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        An approved article whose layout every blog should follow. Only its structure and styling are used,
+                        never its wording. Save the profile after uploading.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{draft.sampleOutline ? 'Replace sample' : 'Upload sample'}</span>
+                        <input
+                          type="file"
+                          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          className="hidden"
+                          disabled={busy}
+                          onChange={(e) => {
+                            handleSampleFile(e.target.files?.[0]);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      {draft.sampleOutline && (
+                        <button
+                          type="button"
+                          onClick={clearSample}
+                          className="text-xs font-semibold px-3 py-2 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {draft.sampleOutline && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-slate-700 dark:text-slate-300">
+                        <strong>{draft.sampleName}</strong> · about {draft.sampleWordCount} words
+                        {draft.sampleStyle &&
+                          ` · ${draft.sampleStyle.font} ${draft.sampleStyle.bodySize}pt, headings ${draft.sampleStyle.h1Size}/${draft.sampleStyle.h2Size}pt, ${draft.sampleStyle.marginMm} mm margins`}
+                        {' '}(show the layout the AI will follow)
+                      </summary>
+                      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 dark:bg-slate-950 p-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                        {draft.sampleOutline}
+                      </pre>
+                    </details>
+                  )}
                 </div>
 
                 <div>

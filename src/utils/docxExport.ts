@@ -1,6 +1,6 @@
 // Converts the delivered Markdown blog into a real .docx file laid out like the client's
-// approved sample: A4, 25 mm margins, Calibri 12 pt, black bold headings, plain bordered
-// tables, bold-label callouts, bold numbered FAQ questions and a numbered reference list.
+// approved sample: plain bordered tables, bold-label callouts, bold numbered FAQ questions and a
+// numbered reference list, using the sample template's fonts, sizes and margins when one is set.
 import {
   AlignmentType,
   BorderStyle,
@@ -18,10 +18,35 @@ import {
   type ParagraphChild,
 } from 'docx';
 
-const FONT = 'Calibri';
 const BORDER = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
-const MARGIN = 1417; // 25 mm
-const CONTENT_WIDTH = 11906 - 2 * MARGIN; // A4 width minus margins, in twips
+
+/** Page and type settings; a client's sample template supplies its own. Sizes in points, lengths in mm. */
+export interface ExportStyle {
+  font: string;
+  bodySize: number;
+  h1Size: number;
+  h2Size: number;
+  h3Size: number;
+  headingColor: string;
+  marginMm: number;
+  pageWidthMm: number;
+  pageHeightMm: number;
+}
+
+// Matches the client's approved sample article.
+export const DEFAULT_EXPORT_STYLE: ExportStyle = {
+  font: 'Calibri',
+  bodySize: 12,
+  h1Size: 20,
+  h2Size: 16,
+  h3Size: 14,
+  headingColor: '000000',
+  marginMm: 25,
+  pageWidthMm: 210,
+  pageHeightMm: 297,
+};
+
+const mmToTwips = (mm: number) => Math.round((mm / 25.4) * 1440);
 const BODY_SPACING = { after: 160, line: 276 };
 
 type Inline = { bold?: boolean; italics?: boolean };
@@ -66,10 +91,10 @@ const splitRow = (line: string) =>
     .split('|')
     .map((c) => c.trim());
 
-function table(lines: string[]): Table {
+function table(lines: string[], contentWidth: number): Table {
   const rows = lines.filter((l) => !/^\s*\|?\s*:?-{2,}/.test(l)).map(splitRow);
   const cols = Math.max(...rows.map((r) => r.length));
-  const colWidth = Math.floor(CONTENT_WIDTH / cols);
+  const colWidth = Math.floor(contentWidth / cols);
   return new Table({
     width: { size: colWidth * cols, type: WidthType.DXA },
     columnWidths: Array(cols).fill(colWidth),
@@ -93,7 +118,7 @@ function table(lines: string[]): Table {
 const BOLD_LINE = /^\*\*([^*]+)\*\*:?$/;
 
 /** Markdown blog -> docx body blocks. */
-export function markdownToDocxBlocks(markdown: string): (Paragraph | Table)[] {
+export function markdownToDocxBlocks(markdown: string, contentWidth = mmToTwips(210 - 2 * 25)): (Paragraph | Table)[] {
   const blocks: (Paragraph | Table)[] = [];
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   let para: string[] = [];
@@ -105,7 +130,7 @@ export function markdownToDocxBlocks(markdown: string): (Paragraph | Table)[] {
     if (!para.length) return;
     const [first, ...rest] = para;
     const q = first.match(BOLD_LINE);
-    if (q && rest.length) {
+    if (q && rest.length && /^\d+[.)]\s|\?$/.test(q[1].trim())) {
       // FAQ style from the sample: bold question, line break, answer in the same paragraph.
       blocks.push(
         new Paragraph({
@@ -113,6 +138,10 @@ export function markdownToDocxBlocks(markdown: string): (Paragraph | Table)[] {
           children: [new TextRun({ text: q[1], bold: true }), new TextRun({ break: 1 }), ...withBareLinks(rest.join(' '))],
         })
       );
+    } else if (q && rest.length) {
+      // Callout label ("Clinical Note") on its own paragraph, then the text, as in the sample.
+      blocks.push(new Paragraph({ spacing: BODY_SPACING, children: [new TextRun({ text: q[1], bold: true })] }));
+      blocks.push(new Paragraph({ spacing: BODY_SPACING, children: withBareLinks(rest.join(' ')) }));
     } else {
       blocks.push(new Paragraph({ spacing: BODY_SPACING, children: withBareLinks(para.join(' ')) }));
     }
@@ -143,7 +172,7 @@ export function markdownToDocxBlocks(markdown: string): (Paragraph | Table)[] {
       const rows: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('|')) rows.push(lines[i++]);
       i--;
-      blocks.push(table(rows), new Paragraph({ spacing: { after: 0 }, children: [] }));
+      blocks.push(table(rows, contentWidth), new Paragraph({ spacing: { after: 0 }, children: [] }));
       continue;
     }
     if (t.startsWith('>')) {
@@ -197,27 +226,31 @@ export function markdownToDocxBlocks(markdown: string): (Paragraph | Table)[] {
   return blocks;
 }
 
-const heading = (id: string, name: string, size: number, before: number, outlineLevel: number) => ({
+const heading = (id: string, name: string, size: number, before: number, outlineLevel: number, st: ExportStyle) => ({
   id,
   name,
   basedOn: 'Normal',
   next: 'Normal',
   quickFormat: true,
-  run: { size, bold: true, color: '000000', font: FONT },
+  run: { size, bold: true, color: st.headingColor || '000000', font: st.font },
   paragraph: { spacing: { before, after: 80 }, keepNext: true, outlineLevel },
 });
 
-export async function markdownToDocxBlob(markdown: string, title: string): Promise<Blob> {
+export async function markdownToDocxBlob(markdown: string, title: string, style?: Partial<ExportStyle> | null): Promise<Blob> {
+  const st: ExportStyle = { ...DEFAULT_EXPORT_STYLE, ...(style || {}) };
+  const margin = mmToTwips(st.marginMm);
+  const pageWidth = mmToTwips(st.pageWidthMm);
+  const half = (pt: number) => Math.round(pt * 2);
   const doc = new Document({
     title,
     creator: 'BlogCraft',
     styles: {
-      default: { document: { run: { font: FONT, size: 24 } } },
+      default: { document: { run: { font: st.font, size: half(st.bodySize) } } },
       paragraphStyles: [
-        heading('Heading1', 'Heading 1', 40, 360, 0),
-        heading('Heading2', 'Heading 2', 32, 240, 1),
-        heading('Heading3', 'Heading 3', 28, 160, 2),
-        heading('Heading4', 'Heading 4', 24, 160, 3),
+        heading('Heading1', 'Heading 1', half(st.h1Size), 360, 0, st),
+        heading('Heading2', 'Heading 2', half(st.h2Size), 240, 1, st),
+        heading('Heading3', 'Heading 3', half(st.h3Size), 160, 2, st),
+        heading('Heading4', 'Heading 4', half(st.bodySize), 160, 3, st),
       ],
     },
     numbering: {
@@ -238,8 +271,13 @@ export async function markdownToDocxBlob(markdown: string, title: string): Promi
     },
     sections: [
       {
-        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN } } },
-        children: markdownToDocxBlocks(markdown),
+        properties: {
+          page: {
+            size: { width: pageWidth, height: mmToTwips(st.pageHeightMm) },
+            margin: { top: margin, right: margin, bottom: margin, left: margin },
+          },
+        },
+        children: markdownToDocxBlocks(markdown, pageWidth - 2 * margin),
       },
     ],
   });

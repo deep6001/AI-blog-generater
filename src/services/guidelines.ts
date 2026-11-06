@@ -16,6 +16,10 @@ function rowToProfile(r: any): GuidelineProfile {
     minWordCount: r.min_word_count,
     cta: r.cta,
     internalLinks: r.internal_links,
+    sampleName: r.sample_name ?? null,
+    sampleOutline: r.sample_outline ?? null,
+    sampleWordCount: r.sample_word_count ?? null,
+    sampleStyle: r.sample_style ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -35,6 +39,10 @@ function profileToRow(p: Omit<GuidelineProfile, 'id' | 'createdAt' | 'updatedAt'
     min_word_count: p.minWordCount,
     cta: p.cta,
     internal_links: p.internalLinks,
+    sample_name: p.sampleName ?? null,
+    sample_outline: p.sampleOutline ?? null,
+    sample_word_count: p.sampleWordCount ?? null,
+    sample_style: p.sampleStyle ?? null,
   };
 }
 
@@ -77,10 +85,28 @@ export async function deleteGuidelineProfile(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** The fields the server needs; ids and timestamps stay client-side. */
+/** The fields the server needs; ids, timestamps and export styling stay client-side. */
 export function guidelinePayload(p: GuidelineProfile) {
-  const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = p;
+  const { id: _id, createdAt: _c, updatedAt: _u, sampleStyle: _s, sampleName: _n, ...rest } = p;
   return rest;
+}
+
+export interface SampleSummary {
+  outline: string;
+  wordCount: number;
+  style: NonNullable<GuidelineProfile['sampleStyle']>;
+}
+
+/** Sends a sample .docx to the server, which describes its layout and styling. */
+export async function analyseSampleDocx(file: File): Promise<SampleSummary> {
+  const res = await fetch('/api/sample-docx', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: await file.arrayBuffer(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Could not read the sample (HTTP ${res.status})`);
+  return data;
 }
 
 export async function requestQaReview(

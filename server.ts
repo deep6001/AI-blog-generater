@@ -11,6 +11,7 @@ const { availableProviders, defaultModelRef, describeModelError, generate, listM
   await import('./server/llm');
 const { runResearch, researchContext, findUnverifiedUrls } = await import('./server/research');
 const { guidelinesContext, runQaReview } = await import('./server/guidelines');
+const { summariseSampleDocx } = await import('./server/sampleDoc');
 type ModelInfo = import('./server/llm').ModelInfo;
 type GuidelineInput = import('./server/guidelines').GuidelineInput;
 
@@ -63,6 +64,8 @@ function toGuidelineInput(g: any): GuidelineInput | null {
     minWordCount: Number(g.minWordCount) > 0 ? Number(g.minWordCount) : 0,
     cta: text(g.cta),
     internalLinks: text(g.internalLinks),
+    sampleOutline: text(g.sampleOutline) || null,
+    sampleWordCount: Number(g.sampleWordCount) > 0 ? Number(g.sampleWordCount) : null,
   };
 }
 
@@ -81,6 +84,19 @@ async function modelOrError(res: express.Response, ref: unknown, where: string):
     return null;
   }
 }
+
+// Approved sample article (.docx): describe its layout so blogs can follow it
+app.post('/api/sample-docx', express.raw({ type: 'application/octet-stream', limit: '15mb' }), (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: 'Upload a .docx file.' });
+    return;
+  }
+  try {
+    res.json(summariseSampleDocx(new Uint8Array(req.body)));
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message?.includes('Word') ? err.message : 'This file could not be read as a Word .docx document.' });
+  }
+});
 
 // Web research: provider web search for cited facts, plus reference articles for house style
 app.post('/api/research', async (req, res) => {

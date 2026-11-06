@@ -1,4 +1,5 @@
 import { webSearch, type ModelInfo, type Usage } from './llm';
+import { sampleContext } from './sampleDoc';
 import type { GuidelineProfile, PublicationVerdict } from '../src/types/pipeline';
 
 export type GuidelineInput = Pick<
@@ -15,6 +16,8 @@ export type GuidelineInput = Pick<
   | 'minWordCount'
   | 'cta'
   | 'internalLinks'
+  | 'sampleOutline'
+  | 'sampleWordCount'
 >;
 
 export const VERDICTS: PublicationVerdict[] = [
@@ -56,7 +59,7 @@ ${words ? `- Full articles must be at least ${words} words.\n` : ''}${clientSpec
 ${p.writingRules.trim()}
 
 ### Reference rules
-${p.referenceRules.trim()}`;
+${p.referenceRules.trim()}${p.sampleOutline ? sampleContext(p.sampleOutline, p.sampleWordCount) : ''}`;
 }
 
 export function qaPrompt(article: string, p: GuidelineInput, sourceUrls: string[]): string {
@@ -72,7 +75,8 @@ ${p.writingRules.trim()}
 
 ## Client reference rules
 ${p.referenceRules.trim()}
-${clientSpecifics(p)}
+${clientSpecifics(p)}${p.sampleOutline ? `${sampleContext(p.sampleOutline, p.sampleWordCount)}
+Check that the article follows this approved layout; list any structural differences as Essential corrections.` : ''}
 ${sourceUrls.length ? `\nThe writer's research found these sources (already checked to exist):\n${sourceUrls.map((u) => `- ${u}`).join('\n')}` : ''}
 
 ## Output format (Markdown, UK English, follow exactly)
