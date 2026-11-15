@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabase';
+import { openedFromPasswordReset, supabase } from '../lib/supabase';
 
 export type TenantRole = 'owner' | 'admin' | 'member';
 
@@ -36,7 +36,10 @@ interface AuthContextType {
   tenants: Tenant[];
   loading: boolean;
   error: string | null;
-  loginWithGoogle: () => Promise<void>;
+  /** The user arrived from a reset email and must choose a new password. */
+  passwordRecovery: boolean;
+  sendPasswordReset: (email: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
   loginManual: (email: string, pass: string) => Promise<void>;
   registerManual: (email: string, pass: string, name: string, workspaceName?: string) => Promise<void>;
   createTenant: (workspaceName: string) => Promise<Tenant>;
@@ -80,6 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(openedFromPasswordReset);
 
   const clearError = () => setError(null);
 
@@ -137,6 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getSession().then(({ data }) => apply(data.session?.user ?? null));
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true);
       // Token refreshes don't change who is signed in; skip the reload.
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
         // Defer: Supabase deadlocks if we await its own API inside this callback.
@@ -150,16 +155,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const loginWithGoogle = async () => {
+  const sendPasswordReset = async (email: string) => {
     setError(null);
-    const { error: err } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin },
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin,
     });
-    if (err) {
-      setError(err.message);
-      throw err;
-    }
+    if (err) throw new Error(err.message);
+  };
+
+  const updatePassword = async (newPassword: string) => {
+    setError(null);
+    const { error: err } = await supabase.auth.updateUser({ password: newPassword });
+    if (err) throw new Error(err.message);
+    setPasswordRecovery(false);
   };
 
   const loginManual = async (email: string, pass: string) => {
@@ -253,7 +261,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         tenants,
         loading,
         error,
-        loginWithGoogle,
+        passwordRecovery,
+        sendPasswordReset,
+        updatePassword,
         loginManual,
         registerManual,
         createTenant,

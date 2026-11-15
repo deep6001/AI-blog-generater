@@ -1,0 +1,216 @@
+import { addUsage, webSearch, type ModelInfo, type Usage, type WebSource } from './llm';
+
+/** A page on one of the client's approved sites that was checked to cover the topic. */
+export interface ApprovedReference extends WebSource {
+  /** page: we opened the page and found the topic; search: the site blocks direct reads, but search cited it for this topic. */
+  checkedBy: 'page' | 'search';
+  matchedTerms: string[];
+  /** What the page says about the topic, from the search. */
+  note?: string;
+}
+
+export interface RejectedReference {
+  url: string;
+  title?: string;
+  reason: string;
+}
+
+export interface ApprovedReferenceResult {
+  references: ApprovedReference[];
+  rejected: RejectedReference[];
+  searchQueries: string[];
+  usage: Usage;
+}
+
+const STOPWORDS = new Set(
+  `a an and are as at be best better by can do does for from good guide how i in is it its me my of on or really right safe should than that the this to vs what when which who why will with work works you your
+  about after before during into over under can't cannot really actually complete ultimate uk`.split(/\s+/)
+);
+
+const stripWww = (host: string) => host.toLowerCase().replace(/^www\./, '');
+
+function normUrl(url: string): string {
+  return url.trim().replace(/[#?].*$/, '').replace(/\/+$/, '').replace(/^https?:\/\/(www\.)?/i, '').toLowerCase();
+}
+
+/** Splits the client's list into whole sites and specific pages or sections. */
+export function parseApproved(list: string[]): { domains: string[]; prefixes: string[] } {
+  const domains = new Set<string>();
+  const prefixes = new Set<string>();
+  for (const raw of list) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    try {
+      const u = new URL(/^https?:\/\//i.test(entry) ? entry : `https://${entry}`);
+      if (u.pathname.replace(/\/+$/, '') === '') domains.add(stripWww(u.hostname));
+      else prefixes.add(normUrl(u.href));
+    } catch {
+      /* not a site or URL */
+    }
+  }
+  return { domains: [...domains], prefixes: [...prefixes] };
+}
+
+/** True when a URL is on an approved site, or inside an approved page or section. */
+export function isApproved(url: string, approved: string[]): boolean {
+  let host: string;
+  try {
+    host = stripWww(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+  const { domains, prefixes } = parseApproved(approved);
+  const n = normUrl(url);
+  return domains.some((d) => host === d || host.endsWith(`.${d}`)) || prefixes.some((p) => n === p || n.startsWith(`${p}/`));
+}
+
+/** The words that say what the topic is about, without question filler. */
+export function topicTerms(topic: string): string[] {
+  const words = topic
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/[\s-]+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  return [...new Set(words)].slice(0, 8);
+}
+
+/** Does the page text discuss the topic or a closely related one? At least half the topic terms must appear. */
+export function pageCoversTopic(text: string, terms: string[]): { covers: boolean; matched: string[] } {
+  const hay = text.toLowerCase();
+  const matched = terms.filter((t) => {
+    const stem = t.length > 4 ? t.replace(/(es|s)$/, '') : t;
+    return new RegExp(`\\b${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(hay);
+  });
+  return { covers: terms.length > 0 && matched.length >= Math.max(1, Math.ceil(terms.length / 2)), matched };
+}
+
+/** Opens a page and returns its title and readable text, or null if it cannot be read as HTML. */
+export async function fetchPageText(url: string, signal?: AbortSignal): Promise<{ title: string; text: string } | null> {
+  try {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BlogCraftReferenceCheck/1.0)', Accept: 'text/html,application/xhtml+xml' },
+    });
+    if (!res.ok || !/html|xml/i.test(res.headers.get('content-type') || '')) return null;
+    const html = (await res.text()).slice(0, 3_000_000);
+    const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim();
+    const text = html
+      .replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;|&#160;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ');
+    return text.length > 200 ? { title, text } : null;
+  } catch {
+    return null;
+  }
+}
+
+function searchPrompt(topic: string, audience: string | undefined, domains: string[], have: string[], needed: number): string {
+  return `Search ONLY these websites (use site: queries): ${domains.join(', ')}
+Find at least ${needed} different pages on them that discuss: "${topic}", or the closest related subject they cover (the condition, treatment or question behind the topic).
+Readers: ${audience || 'general readers'}.
+${have.length ? `Already found, do NOT return these again:\n${have.map((u) => `- ${u}`).join('\n')}\n` : ''}
+For each page, write one bullet: the page title, then exactly what it says that is relevant (findings, numbers, recommendations). Use only what the pages say. Do not use any other website.`;
+}
+
+/** Notes per URL from the search answer: the line each citation appears in. */
+function notesBySource(text: string, sources: WebSource[]): Map<string, string> {
+  const notes = new Map<string, string>();
+  for (const line of text.split('\n')) {
+    for (const m of line.matchAll(/\[(\d+)\]/g)) {
+      const src = sources.find((s) => s.id === Number(m[1]));
+      if (src && !notes.has(src.url)) notes.set(src.url, line.replace(/\[\d+\]/g, '').replace(/^[-*\s]+/, '').trim().slice(0, 300));
+    }
+  }
+  return notes;
+}
+
+/**
+ * Finds references for the article on the client's approved sites only, then opens each page
+ * to confirm the topic (or a closely related one) is really there.
+ */
+export async function findApprovedReferences(
+  info: ModelInfo,
+  input: { topic: string; audience?: string; approved: string[]; needed: number },
+  timeoutMs: number
+): Promise<ApprovedReferenceResult> {
+  const { domains, prefixes } = parseApproved(input.approved);
+  const searchDomains = [...new Set([...domains, ...prefixes.map((p) => p.split('/')[0])])];
+  const terms = topicTerms(input.topic);
+  const candidates = new Map<string, { title: string; url: string; domain: string; note?: string; fromSearch: boolean }>();
+  const searchQueries: string[] = [];
+  const rejected: RejectedReference[] = [];
+  let usage: Usage = { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 };
+
+  // Specific pages the client listed are always candidates.
+  for (const raw of input.approved) {
+    if (!/^https?:\/\//i.test(raw.trim()) || !parseApproved([raw]).prefixes.length) continue;
+    const url = raw.trim();
+    candidates.set(normUrl(url), { title: url, url, domain: stripWww(new URL(url).hostname), fromSearch: false });
+  }
+
+  const target = Math.max(input.needed, 3) + 3; // a few spare, some will fail the check
+  for (let round = 0; round < 2 && searchDomains.length; round++) {
+    const found = [...candidates.values()].filter((c) => c.fromSearch).length;
+    if (found >= target) break;
+    try {
+      const res = await webSearch(
+        info,
+        searchPrompt(input.topic, input.audience, searchDomains, [...candidates.values()].map((c) => c.url), target - found),
+        { allowedDomains: searchDomains, signal: AbortSignal.timeout(timeoutMs) }
+      );
+      usage = addUsage(usage, res.usage);
+      searchQueries.push(...res.searchQueries);
+      const notes = notesBySource(res.text, res.sources);
+      let added = 0;
+      for (const s of res.sources) {
+        const key = normUrl(s.url);
+        if (candidates.has(key)) continue;
+        if (!isApproved(s.url, input.approved)) {
+          rejected.push({ url: s.url, title: s.title, reason: 'Not on an approved site.' });
+          continue;
+        }
+        candidates.set(key, { title: s.title, url: s.url, domain: s.domain, note: notes.get(s.url), fromSearch: true });
+        added++;
+      }
+      if (!added) break;
+    } catch (err) {
+      if (round === 0 && !candidates.size) throw err;
+      break;
+    }
+  }
+
+  // Open every candidate and confirm the topic is on the page.
+  const signal = AbortSignal.timeout(Math.min(timeoutMs, 30000));
+  const checked = await Promise.all(
+    [...candidates.values()].slice(0, 15).map(async (c) => {
+      const page = await fetchPageText(c.url, signal);
+      if (page) {
+        const { covers, matched } = pageCoversTopic(`${page.title} ${page.text}`, terms);
+        if (covers) {
+          const title = c.title && c.title !== c.url ? c.title : page.title || c.url;
+          return { ref: { ...c, title, checkedBy: 'page' as const, matchedTerms: matched } };
+        }
+        return { reject: { url: c.url, title: page.title || c.title, reason: `Page does not discuss the topic (matched ${matched.join(', ') || 'no topic words'}).` } };
+      }
+      // Some approved sites block automated reads; trust a page the search engine cited for this topic.
+      if (c.fromSearch) return { ref: { ...c, checkedBy: 'search' as const, matchedTerms: [] } };
+      return { reject: { url: c.url, title: c.title, reason: 'Page could not be opened to check it.' } };
+    })
+  );
+
+  const references: ApprovedReference[] = [];
+  for (const r of checked) {
+    if (r.reject) rejected.push(r.reject);
+    if (r.ref) {
+      const { fromSearch: _f, ...rest } = r.ref;
+      references.push({ ...rest, id: references.length + 1 });
+    }
+  }
+  // Pages confirmed by opening them come first.
+  references.sort((a, b) => (a.checkedBy === b.checkedBy ? 0 : a.checkedBy === 'page' ? -1 : 1));
+  references.forEach((r, i) => (r.id = i + 1));
+  return { references, rejected, searchQueries, usage };
+}

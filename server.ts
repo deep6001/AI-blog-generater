@@ -104,7 +104,7 @@ app.post('/api/sample-docx', requireUser, express.raw({ type: 'application/octet
 
 // Web research: provider web search for cited facts, plus reference articles for house style
 app.post('/api/research', requireUser, async (req, res) => {
-  const { topic, audience, tone, referenceUrls, allowedDomains, minSources, model } = req.body;
+  const { topic, audience, tone, referenceUrls, approvedSources, minSources, model } = req.body;
   if (!topic || typeof topic !== 'string') {
     res.status(400).json({ error: 'Missing topic parameter.' });
     return;
@@ -120,7 +120,9 @@ app.post('/api/research', requireUser, async (req, res) => {
         audience,
         tone,
         referenceUrls: Array.isArray(referenceUrls) ? referenceUrls : [],
-        allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
+        approvedSources: Array.isArray(approvedSources)
+          ? approvedSources.filter((s: unknown) => typeof s === 'string').slice(0, 40)
+          : [],
         minSources: Math.min(Math.max(Number(minSources) || 0, 0), 15),
       },
       RESEARCH_TIMEOUT_MS
@@ -165,7 +167,9 @@ app.post('/api/generate-step', requireUser, async (req, res) => {
     res.json({
       text,
       model: info.id,
-      unverifiedUrls: hasResearch ? findUnverifiedUrls(text, research.sources) : [],
+      unverifiedUrls: hasResearch
+        ? findUnverifiedUrls(text, [...research.sources, ...(Array.isArray(research.approvedReferences) ? research.approvedReferences : [])])
+        : [],
       usage: { promptTokens, candidatesTokens, totalTokens: usage.totalTokens || promptTokens + candidatesTokens },
     });
   } catch (err: any) {
@@ -199,7 +203,7 @@ app.post('/api/qa-review', requireUser, async (req, res) => {
 
 // Final check: compare the finished article with the sample template and word range, and correct it.
 app.post('/api/finalize', requireUser, async (req, res) => {
-  const { article, guidelines, targetWordCount, sources, model } = req.body;
+  const { article, guidelines, targetWordCount, sources, approvedSources, model } = req.body;
   if (!article || typeof article !== 'string') {
     res.status(400).json({ error: 'Missing article.' });
     return;
@@ -219,6 +223,12 @@ app.post('/api/finalize', requireUser, async (req, res) => {
   const validSources = Array.isArray(sources)
     ? sources.filter((s: any) => typeof s?.url === 'string').map((s: any) => ({ title: String(s.title || s.url), url: s.url }))
     : [];
+  const approved = Array.isArray(approvedSources) ? approvedSources.filter((s: unknown) => typeof s === 'string') : [];
+  if (approved.length) {
+    spec.approvedSources = approved;
+    // Only as many references as the approved sites could provide.
+    spec.minReferences = Math.min(spec.minReferences, validSources.length);
+  }
 
   try {
     const deadline = AbortSignal.timeout(QA_TIMEOUT_MS * 2);

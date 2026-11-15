@@ -11,6 +11,7 @@ import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { UsageDashboard } from './components/UsageDashboard';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthScreen } from './components/AuthScreen';
+import { ResetPasswordScreen } from './components/ResetPasswordScreen';
 import { TenantSwitcherModal } from './components/TenantSwitcherModal';
 import { GuidelinesModal } from './components/GuidelinesModal';
 import { loadGuidelineProfiles } from './services/guidelines';
@@ -38,7 +39,7 @@ export default function App() {
 }
 
 function MainAppContent() {
-  const { user, currentTenant, loading } = useAuth();
+  const { user, currentTenant, loading, passwordRecovery } = useAuth();
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [isTenantModalOpen, setIsTenantModalOpen] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -346,6 +347,8 @@ function MainAppContent() {
       </div>
     );
   }
+
+  if (passwordRecovery) return <ResetPasswordScreen />;
 
   // If user is not authenticated and has not clicked "continue as guest", show Login & Registration screen
   if (!user && !isGuestMode) {

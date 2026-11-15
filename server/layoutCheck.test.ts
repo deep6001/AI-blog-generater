@@ -146,7 +146,7 @@ test('finalizeArticle never returns a worse or truncated article', async () => {
   const broken = good().replace('**Clinical Note**\n', '');
   const result = await finalizeArticle(broken, spec, async () => 'Sorry, here is a summary.');
   assert.equal(result.article, broken);
-  assert.equal(result.passes, 2);
+  assert.equal(result.passes, 3);
 });
 
 test('dedupeReferences drops repeated sources and renumbers the list', async () => {
@@ -206,4 +206,14 @@ test('body tables and lists must have exactly the sample section shapes', () => 
   const issues = checkLayout(wrong, spec).issues.join('\n');
   assert.match(issues, /own "## " heading[\s\S]*"Choosing a Practitioner\?" \(has paragraph\(s\) -> table\)/);
   assert.match(issues, /introductory paragraph[\s\S]*"What Side Effects Can It Cause\?" \(has bulleted list\)/);
+});
+
+test('a missing lead-in list names the section to convert', () => {
+  const withList = outline.replace(
+    '## Second Question?\n',
+    '## Second Question?\n[Bulleted list, 3 items, each starting with a bold lead-in. e.g. "x"]\n'
+  );
+  const spec = specFromOutline(withList, base);
+  const md = good().replace('## Second Question?', '## What Side Effects Can It Cause?');
+  assert.match(checkLayout(md, spec).issues.join('\n'), /Convert the body section "What Side Effects Can It Cause\?"/);
 });

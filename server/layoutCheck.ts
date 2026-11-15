@@ -1,3 +1,4 @@
+import { isApproved } from './references';
 // Checks a finished article against the client's sample template and word range, and builds the
 // instructions for a correction pass. The checks are deterministic so the model can't "agree"
 // that it followed the format when it didn't.
@@ -31,6 +32,8 @@ export interface LayoutSpec {
   minReferences: number;
   noDoiLinks: boolean;
   internalLinkUrls: string[];
+  /** Client-approved sites or pages; when set, every reference must come from them. */
+  approvedSources?: string[];
 }
 
 type SpecBase = Omit<
@@ -253,6 +256,18 @@ function sectionShape(s: Section): BlockKind[] {
   return shape;
 }
 
+const LIST_HEADING =
+  /side effects?|signs?|symptoms?|ways?|tips|options|types|risks?|benefits?|steps|causes|triggers|strategies|what can you do|how can (you|adults|families)|what (should|can)/i;
+
+/**
+ * The body section best suited to become the sample's lead-in list: a plain-paragraph section
+ * (no callout or table) whose heading suggests several items, else a plain section mid-article.
+ */
+export function listCandidate(body: Section[]): string | null {
+  const plain = body.filter((s) => s.blocks.length > 0 && s.blocks.every((b) => b.kind === 'para'));
+  return (plain.find((s) => LIST_HEADING.test(s.heading)) ?? plain[Math.floor(plain.length / 2)])?.heading ?? null;
+}
+
 /** FAQ items and list items collapse to one block per run for comparison. */
 function collapse(kinds: BlockKind[]): BlockKind[] {
   return kinds.filter((k, i) => !(k !== 'para' && k === kinds[i - 1]));
@@ -364,9 +379,13 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
   if (spec.bodyLeadInList) {
     const hasLeadIn = body.some((s) => s.blocks.some((b) => b.kind === 'bullets' && b.leadIn));
     if (!hasLeadIn) {
+      const target = listCandidate(body);
       issues.push(
-        'Include one bulleted list in a body section where several items are compared or listed (for example side effects, options or warning signs), each item starting with a bold lead-in: "- **Term:** explanation.", as in the sample. Keep that section\'s paragraphs to at most ' +
-          `${spec.parasPerSection} around the list.`
+        (target
+          ? `The sample has a bulleted list with bold lead-ins but this article has none. Convert the body section "${target}" into this exact shape: `
+          : 'The sample has a bulleted list with bold lead-ins but this article has none. Convert one body section that covers several items into this exact shape: ') +
+          'one short introductory paragraph, then 4 to 8 bullets each written as "- **Lead-in:** one-sentence explanation.", then one short closing paragraph. ' +
+          "Build the bullets from that section's existing points so the word count stays about the same. Keep its heading."
       );
     }
   }
@@ -406,6 +425,19 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
   }
   const urls = refs.map((r) => r.match(/https?:\/\/\S+/)?.[0]?.replace(/[).,]+$/, '')).filter(Boolean);
   if (new Set(urls).size < urls.length) issues.push('Remove duplicate references (the same URL appears more than once).');
+  if (spec.approvedSources?.length) {
+    const outside = refs.filter((r) => {
+      const url = r.match(/https?:\/\/\S+/)?.[0]?.replace(/[).,]+$/, '');
+      return !url || !isApproved(url, spec.approvedSources!);
+    });
+    if (outside.length) {
+      issues.push(
+        `Every reference must be one of the approved references (client-approved sites only). Replace or remove: ${outside
+          .map((r) => r.replace(/^\s*\d+[.)]\s*/, '').slice(0, 120))
+          .join(' | ')}`
+      );
+    }
+  }
 
   if (spec.internalLinkUrls.length) {
     const finalThoughts = markdown.match(/^##\s+Final Thoughts[^\n]*\n([\s\S]*?)(?=^##\s)/im)?.[1] || '';
@@ -434,7 +466,7 @@ export function correctionPrompt(
 
 ${issues.map((i, n) => `${n + 1}. ${i}`).join('\n')}
 
-Fix ONLY these problems. Keep the facts, tone, headings and section order otherwise unchanged, and add no new claims.${sourceList}${noPadding}
+Fix EVERY problem in the list: structure problems are as important as the word count, so do not skip any. Keep the facts, tone, headings and section order otherwise unchanged, and add no new claims.${sourceList}${noPadding}
 Target length: ${spec.minWords} to ${spec.maxWords} words, excluding the References section. Count carefully.
 Output the COMPLETE corrected article in Markdown and nothing else: no notes, no explanation.
 
@@ -489,7 +521,7 @@ export async function finalizeArticle(
   let best = { article: start, ...checkLayout(start, spec) };
   let passes = 0;
 
-  while (best.issues.length && passes < (opts.maxPasses ?? 2)) {
+  while (best.issues.length && passes < (opts.maxPasses ?? 3)) {
     passes++;
     const revised = dedupeReferences((await fix(correctionPrompt(best.article, best.issues, spec, opts.sources))).trim(), spec.referencesHeading);
     // A pass that drops most of the article is a failed pass, not a shorter article.

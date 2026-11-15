@@ -1,4 +1,5 @@
 import { addUsage, readUrls, webSearch, type ModelInfo, type Usage, type WebSource } from './llm';
+import { findApprovedReferences, type ApprovedReference, type RejectedReference } from './references';
 
 export type ResearchSource = WebSource;
 
@@ -7,8 +8,8 @@ export interface ResearchInput {
   audience?: string;
   tone?: string;
   referenceUrls?: string[];
-  /** Client's allowed reference domains; research favours these. */
-  allowedDomains?: string[];
+  /** Sites or pages the client accepts as references. Research may use any site; references come only from these. */
+  approvedSources?: string[];
   /** Distinct sources the article needs (the client's reference count); research searches again if short. */
   minSources?: number;
 }
@@ -23,13 +24,15 @@ export interface ResearchResult {
   tokenUsage: Usage;
   /** Set when the reference articles could not be read; research still succeeded. */
   styleNotesError?: string;
+  /** The client's approved list this research used, when there is one. */
+  approvedSources?: string[];
+  /** Pages on approved sites that were checked to cover the topic: the only allowed references. */
+  approvedReferences?: ApprovedReference[];
+  rejectedReferences?: RejectedReference[];
+  approvedReferencesError?: string;
 }
 
-function researchPrompt({ topic, audience, tone, allowedDomains }: ResearchInput): string {
-  const domainRule = allowedDomains?.length
-    ? `
-The client only accepts references from: ${allowedDomains.join(', ')}. Find evidence on those sites wherever possible.`
-    : '';
+function researchPrompt({ topic, audience, tone }: ResearchInput): string {
   return `Research this blog topic using web search before answering: "${topic}"
 Readers: ${audience || 'general readers'}. Tone of the final article: ${tone || 'clear and practical'}.
 
@@ -50,7 +53,7 @@ Claims that are commonly made but poorly supported, and genuine disagreements.
 ## Common myths
 Misconceptions with the evidence-based correction.
 
-Rules: prefer primary and authoritative sources (peer-reviewed journals, PubMed, government and professional bodies) over blogs and forums. Prefer sources from the last 5 years. Never state a statistic you did not find. If you could not find solid evidence for a section, say so plainly.${domainRule}`;
+Rules: prefer primary and authoritative sources (peer-reviewed journals, PubMed, government and professional bodies) over blogs and forums. Prefer sources from the last 5 years. Never state a statistic you did not find. If you could not find solid evidence for a section, say so plainly.`;
 }
 
 function stylePrompt(urls: string[]): string {
@@ -109,10 +112,15 @@ export async function runResearch(
   const referenceUrls = (input.referenceUrls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 10);
   const timeout = () => AbortSignal.timeout(timeoutMs);
 
+  const approved = (input.approvedSources || []).map((s) => s.trim()).filter(Boolean);
+  // Research searches any site. Approved references are found and checked in parallel.
   // Style notes are a nice-to-have: a slow or blocked reference page must not sink the research.
-  const [search, style] = await Promise.allSettled([
-    webSearch(info, researchPrompt(input), { allowedDomains: input.allowedDomains, signal: timeout() }),
+  const [search, style, refs] = await Promise.allSettled([
+    webSearch(info, researchPrompt(input), { signal: timeout() }),
     referenceUrls.length ? readUrls(info, stylePrompt(referenceUrls), timeout()) : Promise.resolve(null),
+    approved.length
+      ? findApprovedReferences(info, { topic: input.topic, audience: input.audience, approved, needed: input.minSources || 5 }, timeoutMs)
+      : Promise.resolve(null),
   ]);
 
   if (search.status === 'rejected') throw search.reason;
@@ -121,11 +129,11 @@ export async function runResearch(
   if (sources.length === 0) throw new Error('Web research found no sources for this topic. Try rephrasing it.');
 
   // The article needs enough distinct sources for the client's reference count; search again if short.
-  const needed = input.minSources || 0;
+  // With an approved list, references come from there, so the general search needs no top-up.
+  const needed = approved.length ? 0 : input.minSources || 0;
   for (let round = 0; round < 2 && sources.length < needed; round++) {
     try {
       const more = await webSearch(info, moreSourcesPrompt(input, sources, needed - sources.length), {
-        allowedDomains: input.allowedDomains,
         signal: timeout(),
       });
       const merged = mergeFindings(brief, sources, more.text, more.sources);
@@ -139,6 +147,7 @@ export async function runResearch(
   }
 
   const styleValue = style.status === 'fulfilled' ? style.value : null;
+  const refValue = refs.status === 'fulfilled' ? refs.value : null;
   return {
     topic: input.topic,
     brief,
@@ -148,14 +157,41 @@ export async function runResearch(
     sources,
     searchQueries,
     createdAt: new Date().toISOString(),
-    tokenUsage: addUsage(usage, styleValue?.usage),
+    tokenUsage: addUsage(usage, styleValue?.usage, refValue?.usage),
+    ...(approved.length
+      ? {
+          approvedSources: approved,
+          approvedReferences: refValue?.references || [],
+          rejectedReferences: refValue?.rejected || [],
+          approvedReferencesError:
+            refs.status === 'rejected' ? `Approved sites could not be searched: ${refs.reason?.message || refs.reason}` : undefined,
+        }
+      : {}),
   };
 }
 
 /** Appended to every pipeline step prompt once research exists for the session. */
-export function researchContext(pack: Pick<ResearchResult, 'brief' | 'sources' | 'styleNotes' | 'createdAt'>): string {
+export function researchContext(
+  pack: Pick<ResearchResult, 'brief' | 'sources' | 'styleNotes' | 'createdAt' | 'approvedReferences'>
+): string {
   const sourceList = pack.sources.map((s) => `[${s.id}] ${s.title}. ${s.url}`).join('\n');
   const style = pack.styleNotes ? `\n\n## House style to follow (learned from reference articles)\n${pack.styleNotes}` : '';
+  const approved = pack.approvedReferences;
+  const approvedList = approved?.length
+    ? approved.map((r) => `[R${r.id}] ${r.title}. ${r.url}${r.note ? `\n    Says: ${r.note}` : ''}`).join('\n')
+    : '(none found)';
+  const referenceRules = approved
+    ? `
+## Approved references (pages on the client's approved sites, checked to cover this topic)
+${approvedList}
+
+## Reference rules
+- The References list may contain ONLY the approved references above, with their exact URLs. Never list any other source, including the research pack sources.
+- Prefer facts the approved references support, and name the organisation or study they come from.
+- Facts from other research sources may be used as background, written without a citation.
+- If there are fewer approved references than the reference count, list only those. Never invent or pad references.`
+    : `
+- Any reference you list must be one of the Sources above, with its exact URL. Never invent studies, authors, journals, figures or links.`;
   return `
 
 ---
@@ -166,8 +202,7 @@ ${pack.brief}
 ${sourceList}${style}
 
 ## Evidence rules
-- Base factual claims, statistics, study findings and guidance on the source pack above.
-- Any reference you list must be one of the Sources above, with its exact URL. Never invent studies, authors, journals, figures or links.
+- Base factual claims, statistics, study findings and guidance on the source pack above.${referenceRules}
 - If a point needs evidence the pack does not contain, write it without a specific figure or citation.
 - Do not show the [n] markers in reader-facing prose unless the article format calls for numbered citations.`;
 }

@@ -50,7 +50,8 @@ export const QaReviewPanel: React.FC<QaReviewPanelProps> = ({ project, session, 
     setRunning(true);
     setError(null);
     try {
-      const sourceUrls = session.research?.sources.map((s) => s.url) || [];
+      const research = session.research;
+      const sourceUrls = (research?.approvedReferences ?? research?.sources ?? []).map((s) => s.url);
       const result = await requestQaReview(article, profile, sourceUrls, model);
 
       if (result.tokenUsage) {

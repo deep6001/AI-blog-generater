@@ -34,6 +34,7 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
   const [tone, setTone] = useState(project.tone);
   const [targetWordCount, setTargetWordCount] = useState(project.targetWordCount);
   const [referenceUrls, setReferenceUrls] = useState((project.referenceUrls || []).join('\n'));
+  const [approvedSources, setApprovedSources] = useState((project.approvedSources || []).join('\n'));
   const [guidelineProfileId, setGuidelineProfileId] = useState(project.guidelineProfileId || '');
   const [model, setModel] = useState<string | null>(project.model || null);
 
@@ -45,6 +46,7 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
       setTone(project.tone);
       setTargetWordCount(project.targetWordCount);
       setReferenceUrls((project.referenceUrls || []).join('\n'));
+      setApprovedSources((project.approvedSources || []).join('\n'));
       setGuidelineProfileId(project.guidelineProfileId || '');
       setModel(project.model || null);
     }
@@ -63,6 +65,14 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
         .split(/\s+/)
         .map((u) => u.trim())
         .filter((u) => /^https?:\/\/\S+$/i.test(u)),
+      approvedSources: [
+        ...new Set(
+          approvedSources
+            .split(/[\s,]+/)
+            .map((u) => u.trim().replace(/\/+$/, ''))
+            .filter((u) => /^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(u))
+        ),
+      ],
       guidelineProfileId: guidelineProfileId || null,
       model,
       updatedAt: new Date().toISOString(),
@@ -71,8 +81,8 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-xl w-full p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
+      <div className="my-auto bg-white dark:bg-slate-900 rounded-3xl max-w-xl w-full p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
@@ -204,6 +214,24 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
               The client's writing, reference and QA rules are added to every step and used for the QA review.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Approved Reference Sources
+            </label>
+            <textarea
+              rows={4}
+              value={approvedSources}
+              onChange={(e) => setApprovedSources(e.target.value)}
+              placeholder={'nhs.uk\npubmed.ncbi.nlm.nih.gov\nhttps://www.bad.org.uk/patient-information-leaflets\nOne site or page per line'}
+              className="w-full text-xs font-mono px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600"
+            />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+              The client's accepted sources. Research can read any website, but the References list only uses pages from these
+              sites (or under these page addresses) that were opened and checked to cover the topic. Leave empty to allow any
+              research source.
             </p>
           </div>
 

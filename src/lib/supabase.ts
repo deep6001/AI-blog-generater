@@ -7,6 +7,10 @@ if (!url || !anonKey) {
   throw new Error('VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set in .env');
 }
 
+/** True when the page was opened from a password reset email. Read before the client clears the URL. */
+export const openedFromPasswordReset =
+  typeof window !== 'undefined' && /type=recovery/.test(window.location.hash + window.location.search);
+
 export const supabase = createClient(url, anonKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 });

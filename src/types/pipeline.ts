@@ -21,6 +21,8 @@ export interface Project {
   tags: string[];
   /** Example articles whose structure and voice the research step should study. */
   referenceUrls?: string[];
+  /** Sites or pages the client accepts as references (one per entry). Empty uses the guideline profile's allowed domains. */
+  approvedSources?: string[];
   /** Client guideline profile applied to every step and to the QA review. */
   guidelineProfileId?: string | null;
   /** "provider:model" for every step unless a step overrides it; empty uses the server default. */
@@ -80,6 +82,13 @@ export interface ResearchSource {
   domain: string;
 }
 
+export interface ApprovedReference extends ResearchSource {
+  /** page: opened and the topic was found on it; search: the site blocks direct reads, so the search citation is used. */
+  checkedBy: 'page' | 'search';
+  matchedTerms: string[];
+  note?: string;
+}
+
 export interface ResearchPack {
   id?: string;
   topic: string;
@@ -89,6 +98,11 @@ export interface ResearchPack {
   searchQueries: string[];
   createdAt: string;
   tokenUsage?: TokenUsage;
+  approvedSources?: string[];
+  /** The only pages the article may list as references, when the client has an approved list. */
+  approvedReferences?: ApprovedReference[];
+  rejectedReferences?: { url: string; title?: string; reason: string }[];
+  approvedReferencesError?: string;
 }
 
 export type ReferenceStyle = 'harvard_short' | 'harvard_full';

@@ -4,7 +4,7 @@ import { Project, ResearchPack } from '../types/pipeline';
 export async function fetchResearch(
   project: Project,
   topic: string,
-  allowedDomains: string[] = [],
+  approvedSources: string[] = [],
   model?: string | null,
   minSources = 0
 ): Promise<ResearchPack & { model: string; styleNotesError?: string }> {
@@ -16,7 +16,7 @@ export async function fetchResearch(
       audience: project.targetAudience,
       tone: project.tone,
       referenceUrls: project.referenceUrls || [],
-      allowedDomains,
+      approvedSources,
       model: model || undefined,
       minSources,
     }),

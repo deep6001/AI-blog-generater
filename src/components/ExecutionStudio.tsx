@@ -16,6 +16,7 @@ import {
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { RunStatusBar, RunOutcome, RunActivity } from './RunStatusBar';
 import { LayoutReportPanel } from './LayoutReportPanel';
+import { ApprovedReferencesPanel } from './ApprovedReferencesPanel';
 import {
   Play,
   RotateCcw,
@@ -119,17 +120,24 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
     onUpdateSession({ ...session, research: researchRef.current });
   };
 
+  // The client's approved reference sites: the project's own list, else the guideline profile's domains.
+  const approvedSources = project.approvedSources?.length ? project.approvedSources : guidelines?.allowedDomains || [];
+
   /** Returns the research pack for this topic, running web research if needed. null means it failed. */
   const prepareResearch = async (topic: string): Promise<ResearchPack | undefined | null> => {
     if (!useWebResearch) return undefined;
     const existing = researchRef.current;
     const neededSources = guidelines?.referenceCount ?? 5;
-    // Reuse earlier research only if it found enough distinct sources for the reference list.
-    if (existing && existing.topic === topic.trim() && existing.sources.length >= neededSources) return existing;
+    // Reuse earlier research only for the same topic and approved list, with enough sources for the reference list.
+    const sameApproved = (existing?.approvedSources || []).join('\n') === approvedSources.join('\n');
+    const enough = approvedSources.length
+      ? !!existing?.approvedReferences?.length
+      : (existing?.sources.length || 0) >= neededSources;
+    if (existing && existing.topic === topic.trim() && sameApproved && enough) return existing;
 
     setResearchStatus({ state: 'running', startedAt: new Date().toISOString() });
     try {
-      const pack = await fetchResearch(project, topic.trim(), guidelines?.allowedDomains || [], project.model, neededSources);
+      const pack = await fetchResearch(project, topic.trim(), approvedSources, project.model, neededSources);
       researchRef.current = pack;
 
       if (pack.tokenUsage) {
@@ -251,7 +259,8 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           model,
           guidelines: guidelines ? guidelinePayload(guidelines) : undefined,
           targetWordCount: project.targetWordCount,
-          sources: research?.sources || [],
+          sources: research?.approvedReferences ?? research?.sources ?? [],
+          approvedSources: research?.approvedReferences ? research.approvedSources : undefined,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -325,6 +334,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
               sources: research.sources,
               styleNotes: research.styleNotes,
               createdAt: research.createdAt,
+              approvedReferences: research.approvedReferences,
             },
           }),
         });
@@ -1088,9 +1098,13 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
               </label>
               <span className="text-[11px] text-slate-500 dark:text-slate-400">
                 {isResearching
-                  ? 'Searching the web and reading sources...'
+                  ? approvedSources.length
+                    ? 'Searching the web, then checking the approved reference sites...'
+                    : 'Searching the web and reading sources...'
                   : research
-                    ? `${research.sources.length} sources found for "${research.topic}"`
+                    ? `${research.sources.length} sources found for "${research.topic}"${
+                        research.approvedReferences ? `, ${research.approvedReferences.length} approved references checked` : ''
+                      }`
                     : project.referenceUrls?.length
                       ? `Will also study ${project.referenceUrls.length} reference article${project.referenceUrls.length === 1 ? '' : 's'}`
                       : 'Add reference articles in project settings to match their style'}
@@ -1104,6 +1118,10 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                   {researchStatus.error} Run again to retry, or untick web research to write from the model's own knowledge.
                 </span>
               </div>
+            )}
+
+            {research?.approvedReferences && !isResearching && (
+              <ApprovedReferencesPanel research={research} needed={guidelines?.referenceCount ?? 5} />
             )}
 
             {research && !isResearching && (
