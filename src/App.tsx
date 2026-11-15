@@ -39,9 +39,7 @@ export default function App() {
 
 function MainAppContent() {
   const { user, currentTenant, loading, passwordRecovery } = useAuth();
-  const [isGuestMode, setIsGuestMode] = useState(false);
   const [isTenantModalOpen, setIsTenantModalOpen] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
 
   // Empty until the signed-in user's workspace has loaded; nothing is read or saved before then.
   const tenantId = currentTenant?.id || '';
@@ -350,8 +348,8 @@ function MainAppContent() {
   if (passwordRecovery) return <ResetPasswordScreen />;
 
   // If user is not authenticated and has not clicked "continue as guest", show Login & Registration screen
-  if (!user && !isGuestMode) {
-    return <AuthScreen onContinueAsGuest={() => setIsGuestMode(true)} />;
+  if (!user) {
+    return <AuthScreen />;
   }
 
   return (
@@ -366,7 +364,6 @@ function MainAppContent() {
         setActiveTab={setActiveTab}
         hasApiKey={hasApiKey}
         onOpenTenantModal={() => setIsTenantModalOpen(true)}
-        onOpenAuth={() => setShowAuthModal(true)}
         syncStatus={syncStatus}
         lastSavedTime={lastSavedTime}
         onTriggerSync={handleTriggerManualSync}
@@ -466,13 +463,6 @@ function MainAppContent() {
         isOpen={isTenantModalOpen}
         onClose={() => setIsTenantModalOpen(false)}
       />
-
-      {/* Modal overlay if guest wants to sign in */}
-      {showAuthModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <AuthScreen onContinueAsGuest={() => setShowAuthModal(false)} />
-        </div>
-      )}
     </div>
   );
 }

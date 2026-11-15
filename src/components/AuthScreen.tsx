@@ -15,11 +15,7 @@ import {
   Stethoscope,
 } from 'lucide-react';
 
-interface AuthScreenProps {
-  onContinueAsGuest?: () => void;
-}
-
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onContinueAsGuest }) => {
+export const AuthScreen: React.FC = () => {
   const { loginManual, registerManual, sendPasswordReset, error, clearError, loading } = useAuth();
 
   const [mode, setMode] = useState<'signin' | 'register' | 'forgot'>('signin');
@@ -300,19 +296,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onContinueAsGuest }) => 
             </button>
           </form>
           </>
-          )}
-
-          {/* Guest Mode option */}
-          {onContinueAsGuest && (
-            <div className="text-center pt-4 border-t border-slate-100 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={onContinueAsGuest}
-                className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
-              >
-                Continue without signing in
-              </button>
-            </div>
           )}
         </div>
       </div>
