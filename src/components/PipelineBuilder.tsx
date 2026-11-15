@@ -1,6 +1,5 @@
 import React from 'react';
-import { ModelCatalog, modelName } from '../services/models';
-import { ModelSelect } from './ModelSelect';
+import { ModelCatalog } from '../services/models';
 import { Project, PipelineStep } from '../types/pipeline';
 import {
   Plus,
@@ -35,15 +34,6 @@ export const PipelineBuilder: React.FC<PipelineBuilderProps> = ({
   onLaunchStudio,
   onBackToProjects,
 }) => {
-  const projectModel = project.model || modelCatalog.defaultModel;
-
-  const handleUpdateStepModel = (stepId: string, model: string | null) => {
-    onUpdateProject({
-      ...project,
-      steps: project.steps.map((s) => (s.id === stepId ? { ...s, model } : s)),
-      updatedAt: new Date().toISOString(),
-    });
-  };
 
   // Move step up or down
   const handleMoveStep = (index: number, direction: 'up' | 'down') => {
@@ -270,16 +260,6 @@ export const PipelineBuilder: React.FC<PipelineBuilderProps> = ({
 
               {/* Direct Prompt Box */}
               <div className="p-4 space-y-2">
-                <div className="flex flex-wrap items-center gap-2 pb-1">
-                  <span className="text-xs text-slate-500 dark:text-slate-400">Model</span>
-                  <ModelSelect
-                    catalog={modelCatalog}
-                    value={step.model}
-                    onChange={(m) => handleUpdateStepModel(step.id, m)}
-                    inheritLabel={projectModel ? `Project model (${modelName(projectModel)})` : 'Project model'}
-                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600"
-                  />
-                </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     Write Prompt for this Step:

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Project, GuidelineProfile } from '../types/pipeline';
 import { Settings2, Save, X, BookMarked } from 'lucide-react';
-import { ModelCatalog, modelName } from '../services/models';
-import { ModelSelect } from './ModelSelect';
+import { ModelCatalog } from '../services/models';
 
 interface ProjectSettingsModalProps {
   project: Project | null;
@@ -36,7 +35,6 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
   const [referenceUrls, setReferenceUrls] = useState((project.referenceUrls || []).join('\n'));
   const [approvedSources, setApprovedSources] = useState((project.approvedSources || []).join('\n'));
   const [guidelineProfileId, setGuidelineProfileId] = useState(project.guidelineProfileId || '');
-  const [model, setModel] = useState<string | null>(project.model || null);
 
   useEffect(() => {
     if (project) {
@@ -48,7 +46,6 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
       setReferenceUrls((project.referenceUrls || []).join('\n'));
       setApprovedSources((project.approvedSources || []).join('\n'));
       setGuidelineProfileId(project.guidelineProfileId || '');
-      setModel(project.model || null);
     }
   }, [project]);
 
@@ -74,7 +71,6 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
         ),
       ],
       guidelineProfileId: guidelineProfileId || null,
-      model,
       updatedAt: new Date().toISOString(),
     });
     onClose();
@@ -166,23 +162,6 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              AI Model
-            </label>
-            <ModelSelect
-              catalog={modelCatalog}
-              value={model}
-              onChange={setModel}
-              inheritLabel={
-                modelCatalog.defaultModel ? `Server default (${modelName(modelCatalog.defaultModel)})` : 'Server default'
-              }
-              className="w-full text-xs font-medium px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600"
-            />
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-              Used for research, every step and the QA review. Individual steps can override it.
-            </p>
-          </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">

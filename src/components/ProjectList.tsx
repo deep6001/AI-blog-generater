@@ -8,7 +8,6 @@ import {
   Settings2,
   Plus,
   PlayCircle,
-  BarChart2,
 } from 'lucide-react';
 
 interface ProjectListProps {
@@ -19,7 +18,6 @@ interface ProjectListProps {
   onDuplicateProject: (project: Project) => void;
   onDeleteProject: (id: string) => void;
   onEditSettings: (project: Project) => void;
-  onOpenUsage?: () => void;
 }
 
 export const ProjectList: React.FC<ProjectListProps> = ({
@@ -30,7 +28,6 @@ export const ProjectList: React.FC<ProjectListProps> = ({
   onDuplicateProject,
   onDeleteProject,
   onEditSettings,
-  onOpenUsage,
 }) => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -54,15 +51,6 @@ export const ProjectList: React.FC<ProjectListProps> = ({
             <Plus className="w-4 h-4" />
             <span>New project</span>
           </button>
-          {onOpenUsage && (
-            <button
-              onClick={onOpenUsage}
-              className="inline-flex items-center gap-2 h-10 px-4 rounded-md border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-sm hover:bg-white dark:hover:bg-slate-900 transition-colors"
-            >
-              <BarChart2 className="w-4 h-4" />
-              <span>Usage</span>
-            </button>
-          )}
         </div>
       </section>
 

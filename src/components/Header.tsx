@@ -3,7 +3,6 @@ import {
   Plus,
   BookOpen,
   MessageSquare,
-  BarChart2,
   LogOut,
   ChevronDown,
   Database,
@@ -15,7 +14,7 @@ import {
 import { Project } from '../types/pipeline';
 import { useAuth } from '../context/AuthContext';
 
-type Tab = 'pipeline' | 'studio' | 'output' | 'settings' | 'usage';
+type Tab = 'pipeline' | 'studio' | 'output' | 'settings';
 
 interface HeaderProps {
   projects: Project[];
@@ -55,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
       key: 'home',
       label: 'Projects',
       icon: <Home className="w-3.5 h-3.5" />,
-      active: activeProjectId === null && activeTab !== 'usage',
+      active: activeProjectId === null,
       onClick: () => onSelectProject(null),
     },
     ...(currentProject
@@ -83,13 +82,6 @@ export const Header: React.FC<HeaderProps> = ({
           },
         ]
       : []),
-    {
-      key: 'usage',
-      label: 'Usage',
-      icon: <BarChart2 className="w-3.5 h-3.5" />,
-      active: activeTab === 'usage',
-      onClick: () => setActiveTab('usage'),
-    },
   ];
 
   const syncDot =

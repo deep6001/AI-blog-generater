@@ -65,7 +65,8 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   onUpdateSession,
   onViewFinalBlog,
 }) => {
-  const projectModel = project.model || modelCatalog.defaultModel;
+  // The server always uses the model set in .env; this is only for display.
+  const projectModel = modelCatalog.defaultModel;
   const { user, currentTenant } = useAuth();
   const [useWebResearch, setUseWebResearch] = useState(true);
   const [researchStatus, setResearchStatus] = useState<{
@@ -327,7 +328,6 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
             systemInstruction: `You are acting as: ${step.systemRole}. Always output clean, professional content adhering to the instructions.`,
             temperature: step.temperature,
             guidelines: guidelines ? guidelinePayload(guidelines) : undefined,
-            model: step.model || project.model || undefined,
             targetWordCount: project.targetWordCount,
             research: research && {
               brief: research.brief,
@@ -384,7 +384,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
 
         const finalStep = activeSteps.find((s) => s.isFinalBlogStep) || activeSteps[activeSteps.length - 1];
         if (step.id === finalStep?.id && text.trim()) {
-          const checked = await finalizeArticle(text, step.model || project.model || undefined, research);
+          const checked = await finalizeArticle(text, undefined, research);
           return { output: checked.article, usage, unverifiedUrls: data.unverifiedUrls || [], layoutReport: checked.report };
         }
         return { output: text, usage, unverifiedUrls: data.unverifiedUrls || [] };
@@ -913,7 +913,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
       : runningIndex >= 0
       ? {
           label: `Writing step ${runningIndex + 1} of ${activeSteps.length}: ${activeSteps[runningIndex].title}`,
-          detail: `Using ${modelName(activeSteps[runningIndex].model || projectModel) || 'the AI model'}`,
+          detail: `Using ${modelName(projectModel) || 'the AI model'}`,
           startedAt: currentSession.stepOutputs[activeSteps[runningIndex].id]?.startedAt,
           completed: completedCount,
           total: activeSteps.length,
@@ -1192,7 +1192,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
 
             <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
               <span>Model:</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">{modelName(selectedStep?.model || projectModel) || 'No model configured'}</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">{modelName(projectModel) || 'No model configured'}</span>
             </div>
           </div>
         </div>
@@ -1402,7 +1402,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                     Executing {selectedStep.title}...
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm">
-                    Sending this step to {modelName(selectedStep.model || projectModel) || 'the AI model'} with the previous step's output.
+                    Sending this step to {modelName(projectModel) || 'the AI model'} with the previous step's output.
                   </p>
                 </div>
               </div>

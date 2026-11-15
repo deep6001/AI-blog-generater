@@ -8,7 +8,6 @@ import { ExecutionStudio } from './components/ExecutionStudio';
 import { FinalBlogView } from './components/FinalBlogView';
 import { NewProjectModal } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
-import { UsageDashboard } from './components/UsageDashboard';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthScreen } from './components/AuthScreen';
 import { ResetPasswordScreen } from './components/ResetPasswordScreen';
@@ -65,7 +64,7 @@ function MainAppContent() {
     return [];
   });
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'studio' | 'output' | 'settings' | 'usage'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'studio' | 'output' | 'settings'>('pipeline');
   const [sessions, setSessions] = useState<Record<string, RunSession>>({});
 
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
@@ -375,24 +374,7 @@ function MainAppContent() {
 
       {/* Main Content Area */}
       <main className="flex-1 pb-16">
-        {activeTab === 'usage' ? (
-          <UsageDashboard
-            projects={projects}
-            sessions={sessions}
-            activeProjectId={activeProjectId}
-            onSelectProject={(id) => {
-              setActiveProjectId(id);
-            }}
-            onBack={() => {
-              if (activeProjectId) {
-                setActiveTab('pipeline');
-              } else {
-                setActiveProjectId(null);
-                setActiveTab('pipeline');
-              }
-            }}
-          />
-        ) : !activeProject ? (
+        {!activeProject ? (
           /* Projects Dashboard */
           <ProjectList
             projects={projects}
@@ -405,7 +387,6 @@ function MainAppContent() {
             onDuplicateProject={handleDuplicateProject}
             onDeleteProject={handleDeleteProject}
             onEditSettings={(p) => setEditingSettingsProject(p)}
-            onOpenUsage={() => setActiveTab('usage')}
           />
         ) : (
           /* Active Project Workspace */

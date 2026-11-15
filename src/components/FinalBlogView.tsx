@@ -299,7 +299,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
         session={session}
         article={editableBlog}
         guidelines={guidelines}
-        model={project.model || modelCatalog.defaultModel}
+        model={modelCatalog.defaultModel}
         onUpdateSession={onUpdateSession}
       />
 

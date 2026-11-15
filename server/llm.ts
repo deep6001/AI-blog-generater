@@ -149,9 +149,9 @@ export async function defaultModelRef(): Promise<string | null> {
 
 export class ModelConfigError extends Error {}
 
-/** Accepts "provider:model" from the client; falls back to the server default. */
-export async function resolveModel(ref: unknown): Promise<ModelInfo> {
-  const value = typeof ref === 'string' && ref.includes(':') ? ref : await defaultModelRef();
+/** The model comes only from the server's .env (OPENAI_MODEL or DEFAULT_MODEL); any model the client sends is ignored. */
+export async function resolveModel(_ref?: unknown): Promise<ModelInfo> {
+  const value = await defaultModelRef();
   if (!value) throw new ModelConfigError('No AI provider is configured. Add OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY to .env.');
   const [provider, ...rest] = value.split(':');
   const model = rest.join(':');
