@@ -9,6 +9,8 @@ export interface ResearchInput {
   referenceUrls?: string[];
   /** Client's allowed reference domains; research favours these. */
   allowedDomains?: string[];
+  /** Distinct sources the article needs (the client's reference count); research searches again if short. */
+  minSources?: number;
 }
 
 export interface ResearchResult {
@@ -65,6 +67,40 @@ Describe their house style so another writer can match it without copying any te
 Be concrete and brief. Bullet points only.`;
 }
 
+function moreSourcesPrompt(input: ResearchInput, have: ResearchSource[], missing: number): string {
+  return `Find at least ${missing} MORE authoritative sources about: "${input.topic}"
+Readers: ${input.audience || 'general readers'}.
+
+Already found (do NOT use these again):
+${have.map((s) => `- ${s.url}`).join('\n')}
+
+Prefer UK clinical guidance (NHS, NICE, British Association of Dermatologists or the relevant UK body), systematic reviews and peer-reviewed studies on PubMed or PMC. Avoid clinic marketing pages and blogs.
+For each new source, give 1 to 3 bullet points stating exactly what it says that is relevant, with numbers, study size and year where available. Use only what you find.`;
+}
+
+/** Appends a follow-up search to the brief, renumbering its [n] markers onto one combined source list. */
+export function mergeFindings(
+  brief: string,
+  sources: ResearchSource[],
+  moreText: string,
+  moreSources: ResearchSource[]
+): { brief: string; sources: ResearchSource[] } {
+  const norm = (u: string) => u.replace(/\/+$/, '').replace(/^https?:\/\/(www\.)?/i, '').toLowerCase();
+  const all = [...sources];
+  const idMap = new Map<number, number>();
+  for (const s of moreSources) {
+    const existing = all.find((x) => norm(x.url) === norm(s.url));
+    if (existing) idMap.set(s.id, existing.id);
+    else {
+      const id = all.length + 1;
+      all.push({ ...s, id });
+      idMap.set(s.id, id);
+    }
+  }
+  const renumbered = moreText.replace(/\[(\d+)\]/g, (m, n) => (idMap.has(Number(n)) ? `[${idMap.get(Number(n))}]` : m));
+  return { brief: `${brief}\n\n## Additional sources\n${renumbered}`, sources: all };
+}
+
 export async function runResearch(
   info: ModelInfo,
   input: ResearchInput,
@@ -80,9 +116,27 @@ export async function runResearch(
   ]);
 
   if (search.status === 'rejected') throw search.reason;
-  const { text: brief, sources, searchQueries, usage } = search.value;
+  let { text: brief, sources, searchQueries, usage } = search.value;
   if (!brief.trim()) throw new Error('Web research returned an empty brief.');
   if (sources.length === 0) throw new Error('Web research found no sources for this topic. Try rephrasing it.');
+
+  // The article needs enough distinct sources for the client's reference count; search again if short.
+  const needed = input.minSources || 0;
+  for (let round = 0; round < 2 && sources.length < needed; round++) {
+    try {
+      const more = await webSearch(info, moreSourcesPrompt(input, sources, needed - sources.length), {
+        allowedDomains: input.allowedDomains,
+        signal: timeout(),
+      });
+      const merged = mergeFindings(brief, sources, more.text, more.sources);
+      if (merged.sources.length === sources.length) break;
+      ({ brief, sources } = merged);
+      searchQueries = [...searchQueries, ...more.searchQueries];
+      usage = addUsage(usage, more.usage);
+    } catch {
+      break; // Keep what we have; the layout check reports a short reference list honestly.
+    }
+  }
 
   const styleValue = style.status === 'fulfilled' ? style.value : null;
   return {

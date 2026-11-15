@@ -18,7 +18,8 @@ import {
   type ParagraphChild,
 } from 'docx';
 
-const BORDER = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
+// 0.75 pt borders, as in the sample.
+const BORDER = { style: BorderStyle.SINGLE, size: 6, color: '000000' };
 
 /** Page and type settings; a client's sample template supplies its own. Sizes in points, lengths in mm. */
 export interface ExportStyle {
@@ -47,7 +48,8 @@ export const DEFAULT_EXPORT_STYLE: ExportStyle = {
 };
 
 const mmToTwips = (mm: number) => Math.round((mm / 25.4) * 1440);
-const BODY_SPACING = { after: 160, line: 276 };
+// Word's default body spacing, as in the sample: 8 pt after, 1.08 line spacing.
+const BODY_SPACING = { after: 160, line: 259 };
 
 type Inline = { bold?: boolean; italics?: boolean };
 
@@ -172,7 +174,7 @@ export function markdownToDocxBlocks(markdown: string, contentWidth = mmToTwips(
       const rows: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('|')) rows.push(lines[i++]);
       i--;
-      blocks.push(table(rows, contentWidth), new Paragraph({ spacing: { after: 0 }, children: [] }));
+      blocks.push(table(rows, contentWidth));
       continue;
     }
     if (t.startsWith('>')) {
@@ -247,10 +249,10 @@ export async function markdownToDocxBlob(markdown: string, title: string, style?
     styles: {
       default: { document: { run: { font: st.font, size: half(st.bodySize) } } },
       paragraphStyles: [
-        heading('Heading1', 'Heading 1', half(st.h1Size), 360, 0, st),
-        heading('Heading2', 'Heading 2', half(st.h2Size), 240, 1, st),
-        heading('Heading3', 'Heading 3', half(st.h3Size), 160, 2, st),
-        heading('Heading4', 'Heading 4', half(st.bodySize), 160, 3, st),
+        heading('Heading1', 'heading 1', half(st.h1Size), 360, 0, st),
+        heading('Heading2', 'heading 2', half(st.h2Size), 240, 1, st),
+        heading('Heading3', 'heading 3', half(st.h3Size), 160, 2, st),
+        heading('Heading4', 'heading 4', half(st.bodySize), 160, 3, st),
       ],
     },
     numbering: {

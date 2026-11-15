@@ -37,6 +37,17 @@ export interface TokenUsage {
   estimatedCostUsd?: number;
 }
 
+export interface LayoutReport {
+  wordCount: number;
+  range: [number, number];
+  /** Problems still present after correction. */
+  issues: string[];
+  /** Problems found before correction. */
+  initialIssues: string[];
+  passes: number;
+  error?: string;
+}
+
 export interface StepOutputRecord {
   stepId: string;
   stepTitle: string;
@@ -49,6 +60,8 @@ export interface StepOutputRecord {
   tokenUsage?: TokenUsage;
   /** Links in the output that were not among the research sources (possible invented references). */
   unverifiedUrls?: string[];
+  /** Final step only: result of the automatic check against the sample template and word range. */
+  layoutReport?: LayoutReport;
 }
 
 export interface ChatMessage {
@@ -105,6 +118,8 @@ export interface GuidelineProfile {
   referenceMix: string;
   allowedDomains: string[];
   minWordCount: number;
+  /** Upper bound; articles are checked and corrected to stay in [min, max], excluding references. */
+  maxWordCount: number;
   cta: string;
   internalLinks: string;
   /** Approved sample article used as the layout template. */

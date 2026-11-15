@@ -14,6 +14,7 @@ export type GuidelineInput = Pick<
   | 'referenceMix'
   | 'allowedDomains'
   | 'minWordCount'
+  | 'maxWordCount'
   | 'cta'
   | 'internalLinks'
   | 'sampleOutline'
@@ -45,15 +46,22 @@ function clientSpecifics(p: GuidelineInput): string {
   return lines.filter(Boolean).join('\n');
 }
 
+/** The client's word range, excluding references. Without a maximum, the project target sets one. */
+export function wordRange(p: Pick<GuidelineInput, 'minWordCount' | 'maxWordCount'> | null, targetWordCount?: number): [number, number] {
+  const min = p?.minWordCount || Math.round((targetWordCount || 1500) * 0.9);
+  const max = p?.maxWordCount && p.maxWordCount >= min ? p.maxWordCount : Math.max(min, Math.round((targetWordCount || min) * 1.1));
+  return [min, max];
+}
+
 /** Appended to every pipeline step so drafts follow the client's rules from the start. */
 export function guidelinesContext(p: GuidelineInput, targetWordCount?: number): string {
-  const words = Math.max(p.minWordCount || 0, targetWordCount || 0);
+  const [min, max] = wordRange(p, targetWordCount);
   return `
 
 ---
 ## Client guidelines: ${p.name}
 These rules override any conflicting instruction above.
-${words ? `- Full articles must be at least ${words} words.\n` : ''}${clientSpecifics(p)}
+- The full article must be between ${min} and ${max} words, excluding the References section. Stay inside this range; it is checked automatically.\n${clientSpecifics(p)}
 
 ### Writing rules
 ${p.writingRules.trim()}

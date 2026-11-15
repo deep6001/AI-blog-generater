@@ -24,9 +24,9 @@ test('parseQaHeader rejects scores outside the scale', () => {
   assert.equal(parseQaHeader('SCORE: 8.5/10', 10).score, 8.5);
 });
 
-test('guidelinesContext uses the larger of profile minimum and project target word count', () => {
-  assert.match(guidelinesContext(profile, 1500), /at least 2400 words/);
-  assert.match(guidelinesContext({ ...profile, minWordCount: 0 }, 3000), /at least 3000 words/);
+test('guidelinesContext states the word range, falling back to the project target', () => {
+  assert.match(guidelinesContext(profile, 1500), /between 2400 and 3000 words/);
+  assert.match(guidelinesContext({ ...profile, minWordCount: 0, maxWordCount: 0 }, 3000), /between 2700 and 3300 words/);
 });
 
 test('guidelinesContext includes client limits and short Harvard format', () => {

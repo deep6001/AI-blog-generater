@@ -183,14 +183,26 @@ export const GuidelinesModal: React.FC<GuidelinesModalProps> = ({
                     </select>
                   </div>
                   <div>
-                    <label className={labelClass}>Minimum words</label>
-                    <input
-                      type="number"
-                      min={0}
-                      className={inputClass}
-                      value={draft.minWordCount}
-                      onChange={(e) => set('minWordCount', Number(e.target.value) || 0)}
-                    />
+                    <label className={labelClass}>Word range (excl. references)</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        className={inputClass}
+                        value={draft.minWordCount}
+                        onChange={(e) => set('minWordCount', Number(e.target.value) || 0)}
+                        aria-label="Minimum words"
+                      />
+                      <span className="text-slate-400">to</span>
+                      <input
+                        type="number"
+                        min={1}
+                        className={inputClass}
+                        value={draft.maxWordCount}
+                        onChange={(e) => set('maxWordCount', Number(e.target.value) || 0)}
+                        aria-label="Maximum words"
+                      />
+                    </div>
                   </div>
                   <div className="sm:col-span-2">
                     <label className={labelClass}>Reference style</label>

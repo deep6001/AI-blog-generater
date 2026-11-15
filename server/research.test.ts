@@ -29,3 +29,19 @@ test('stripTracking removes utm parameters but keeps real ones', async () => {
   assert.equal(stripTracking('https://www.nhs.uk/tests/colposcopy/?utm_source=openai'), 'https://www.nhs.uk/tests/colposcopy/');
   assert.equal(stripTracking('https://pubmed.ncbi.nlm.nih.gov/?term=x&utm_medium=a'), 'https://pubmed.ncbi.nlm.nih.gov/?term=x');
 });
+
+test('mergeFindings renumbers follow-up citations onto one source list without duplicates', async () => {
+  const { mergeFindings } = await import('./research');
+  const first = [
+    { id: 1, title: 'NICE', url: 'https://www.nice.org.uk/ng198', domain: 'nice.org.uk' },
+    { id: 2, title: 'Study', url: 'https://a.example/study', domain: 'a.example' },
+  ];
+  const more = [
+    { id: 1, title: 'NHS', url: 'https://www.nhs.uk/acne/', domain: 'nhs.uk' },
+    { id: 2, title: 'NICE again', url: 'https://nice.org.uk/ng198', domain: 'nice.org.uk' },
+  ];
+  const merged = mergeFindings('Brief [1][2].', first, '- NHS says X [1]. NICE says Y [2].', more);
+  assert.deepEqual(merged.sources.map((s) => s.id), [1, 2, 3]);
+  assert.equal(merged.sources[2].url, 'https://www.nhs.uk/acne/');
+  assert.match(merged.brief, /## Additional sources\n- NHS says X \[3\]\. NICE says Y \[1\]\./);
+});

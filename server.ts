@@ -13,6 +13,8 @@ const { runResearch, researchContext, findUnverifiedUrls } = await import('./ser
 const { guidelinesContext, runQaReview } = await import('./server/guidelines');
 const { summariseSampleDocx } = await import('./server/sampleDoc');
 const { requireUser } = await import('./server/auth');
+const { finalizeArticle, specFromOutline } = await import('./server/layoutCheck');
+const { wordRange } = await import('./server/guidelines');
 type ModelInfo = import('./server/llm').ModelInfo;
 type GuidelineInput = import('./server/guidelines').GuidelineInput;
 
@@ -63,6 +65,7 @@ function toGuidelineInput(g: any): GuidelineInput | null {
     referenceMix: text(g.referenceMix),
     allowedDomains: Array.isArray(g.allowedDomains) ? g.allowedDomains.filter((d: unknown) => typeof d === 'string') : [],
     minWordCount: Number(g.minWordCount) > 0 ? Number(g.minWordCount) : 0,
+    maxWordCount: Number(g.maxWordCount) > 0 ? Number(g.maxWordCount) : 0,
     cta: text(g.cta),
     internalLinks: text(g.internalLinks),
     sampleOutline: text(g.sampleOutline) || null,
@@ -101,7 +104,7 @@ app.post('/api/sample-docx', requireUser, express.raw({ type: 'application/octet
 
 // Web research: provider web search for cited facts, plus reference articles for house style
 app.post('/api/research', requireUser, async (req, res) => {
-  const { topic, audience, tone, referenceUrls, allowedDomains, model } = req.body;
+  const { topic, audience, tone, referenceUrls, allowedDomains, minSources, model } = req.body;
   if (!topic || typeof topic !== 'string') {
     res.status(400).json({ error: 'Missing topic parameter.' });
     return;
@@ -118,6 +121,7 @@ app.post('/api/research', requireUser, async (req, res) => {
         tone,
         referenceUrls: Array.isArray(referenceUrls) ? referenceUrls : [],
         allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
+        minSources: Math.min(Math.max(Number(minSources) || 0, 0), 15),
       },
       RESEARCH_TIMEOUT_MS
     );
@@ -190,6 +194,43 @@ app.post('/api/qa-review', requireUser, async (req, res) => {
     res.json({ ...result, model: info.id });
   } catch (err: any) {
     sendModelError(res, '/api/qa-review', err, info);
+  }
+});
+
+// Final check: compare the finished article with the sample template and word range, and correct it.
+app.post('/api/finalize', requireUser, async (req, res) => {
+  const { article, guidelines, targetWordCount, sources, model } = req.body;
+  if (!article || typeof article !== 'string') {
+    res.status(400).json({ error: 'Missing article.' });
+    return;
+  }
+  const info = await modelOrError(res, model, '/api/finalize');
+  if (!info) return;
+
+  const profile = toGuidelineInput(guidelines);
+  const [minWords, maxWords] = wordRange(profile, Number(targetWordCount) || 0);
+  const spec = specFromOutline(profile?.sampleOutline, {
+    minWords,
+    maxWords,
+    minReferences: profile?.referenceCount || 5,
+    noDoiLinks: (profile?.referenceStyle ?? 'harvard_short') === 'harvard_short',
+    internalLinkUrls: (profile?.internalLinks.match(/https?:\/\/[^\s|)]+/g) || []).map((u) => u.replace(/[.,]+$/, '')),
+  });
+  const validSources = Array.isArray(sources)
+    ? sources.filter((s: any) => typeof s?.url === 'string').map((s: any) => ({ title: String(s.title || s.url), url: s.url }))
+    : [];
+
+  try {
+    const deadline = AbortSignal.timeout(QA_TIMEOUT_MS * 2);
+    const result = await finalizeArticle(
+      article,
+      spec,
+      async (prompt) => (await generate(info, { prompt, temperature: 0.3, signal: deadline })).text,
+      { sources: validSources }
+    );
+    res.json({ ...result, range: [minWords, maxWords], model: info.id });
+  } catch (err: any) {
+    sendModelError(res, '/api/finalize', err, info);
   }
 });
 

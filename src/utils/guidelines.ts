@@ -52,9 +52,9 @@ export const DEFAULT_DOCUMENT_FORMAT = `DOCUMENT FORMAT (match the client's appr
 - Start with one "# " title in Title Case, ideally the reader's question. Then 2 short introduction paragraphs with no heading.
 - No meta description, byline, reading time, horizontal rules, emojis or disclaimer unless the brief asks for them.
 - Main sections use "## " headings in Title Case, phrased as the reader's question, e.g. "## Why Do You Still Need ADT If Abiraterone Lowers Androgens?". Usually 2 paragraphs per section. Do not number headings.
-- Special blocks: put the label alone in bold on its own line, exactly one of **Clinical Note**, **UK Guidance Note**, **Evidence Note** or **Research Insight**, followed by 1 to 2 normal paragraphs. Place each block inside the section it supports. Never use blockquotes (>) for them.
-- Tables: plain Markdown tables, usually 2 to 3 columns, under a "## " heading or a lead-in sentence.
-- Bullet lists use a bold lead-in: "- **Low potassium:** explanation."
+- Special blocks: put the label alone in bold on its own line, exactly one of **Clinical Note**, **UK Guidance Note**, **Evidence Note** or **Research Insight**, followed by exactly 2 normal paragraphs. Use all four, each in a different body section that it supports. Never use blockquotes (>) for them.
+- Tables: each body table gets its OWN "## " heading, a short descriptive title rather than a question (e.g. "How ADT, Abiraterone and Prednisolone Work Together"), and that section contains ONLY the table: no paragraph before or after it. Plain Markdown, usually 2 columns, with a header row.
+- Include one list section where several items are listed (for example side effects, options or warning signs), shaped exactly as: one short introductory paragraph, then a bulleted list where every item starts with a bold lead-in ("- **Low potassium:** explanation."), then one short closing paragraph.
 - Close with these sections, in this order, with these exact headings:
   ## Myth vs Fact
   A table with columns | Myth | Fact | and 6 to 8 rows.
@@ -130,6 +130,7 @@ export function createDefaultGuidelineProfile(name: string): Omit<GuidelineProfi
     referenceMix: DEFAULT_REFERENCE_MIX,
     allowedDomains: [],
     minWordCount: 2400,
+    maxWordCount: 3000,
     cta: '',
     internalLinks: '',
   };

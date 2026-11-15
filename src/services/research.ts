@@ -5,7 +5,8 @@ export async function fetchResearch(
   project: Project,
   topic: string,
   allowedDomains: string[] = [],
-  model?: string | null
+  model?: string | null,
+  minSources = 0
 ): Promise<ResearchPack & { model: string; styleNotesError?: string }> {
   const response = await apiFetch('/api/research', {
     method: 'POST',
@@ -17,6 +18,7 @@ export async function fetchResearch(
       referenceUrls: project.referenceUrls || [],
       allowedDomains,
       model: model || undefined,
+      minSources,
     }),
   });
   const data = await response.json().catch(() => ({}));

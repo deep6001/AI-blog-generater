@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Project, RunSession, StepOutputRecord, ChatMessage, TokenUsage, ResearchPack, GuidelineProfile } from '../types/pipeline';
+import { Project, RunSession, StepOutputRecord, ChatMessage, TokenUsage, ResearchPack, GuidelineProfile, LayoutReport } from '../types/pipeline';
 import { guidelinePayload } from '../services/guidelines';
 import { ModelCatalog, modelName } from '../services/models';
 import { useAuth } from '../context/AuthContext';
@@ -15,6 +15,7 @@ import {
 } from '../utils/pipeline';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { RunStatusBar, RunOutcome, RunActivity } from './RunStatusBar';
+import { LayoutReportPanel } from './LayoutReportPanel';
 import {
   Play,
   RotateCcw,
@@ -73,6 +74,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   }>({ state: 'idle' });
   const [outcome, setOutcome] = useState<RunOutcome | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [finalizingSince, setFinalizingSince] = useState<string | null>(null);
 
   // Run handlers spread a render-time copy of currentSession, so research is kept in a ref
   // and attached to every update rather than relying on that copy.
@@ -121,11 +123,13 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   const prepareResearch = async (topic: string): Promise<ResearchPack | undefined | null> => {
     if (!useWebResearch) return undefined;
     const existing = researchRef.current;
-    if (existing && existing.topic === topic.trim()) return existing;
+    const neededSources = guidelines?.referenceCount ?? 5;
+    // Reuse earlier research only if it found enough distinct sources for the reference list.
+    if (existing && existing.topic === topic.trim() && existing.sources.length >= neededSources) return existing;
 
     setResearchStatus({ state: 'running', startedAt: new Date().toISOString() });
     try {
-      const pack = await fetchResearch(project, topic.trim(), guidelines?.allowedDomains || [], project.model);
+      const pack = await fetchResearch(project, topic.trim(), guidelines?.allowedDomains || [], project.model, neededSources);
       researchRef.current = pack;
 
       if (pack.tokenUsage) {
@@ -231,12 +235,45 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   };
 
   // Helper to execute a single step with automatic retry on timeout or network errors
+  /** Checks the delivered article against the template and word range, correcting it if needed. */
+  const finalizeArticle = async (
+    article: string,
+    model: string | undefined,
+    research?: ResearchPack
+  ): Promise<{ article: string; report?: LayoutReport }> => {
+    setFinalizingSince(new Date().toISOString());
+    try {
+      const response = await apiFetch('/api/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          article,
+          model,
+          guidelines: guidelines ? guidelinePayload(guidelines) : undefined,
+          targetWordCount: project.targetWordCount,
+          sources: research?.sources || [],
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      return {
+        article: data.article || article,
+        report: { wordCount: data.wordCount, range: data.range, issues: data.issues, initialIssues: data.initialIssues, passes: data.passes },
+      };
+    } catch (err: any) {
+      // The article itself is fine to keep; only the check failed.
+      return { article, report: { wordCount: 0, range: [0, 0], issues: [], initialIssues: [], passes: 0, error: err.message || 'Layout check failed' } };
+    } finally {
+      setFinalizingSince(null);
+    }
+  };
+
   const executeStep = async (
     stepIndex: number,
     topic: string,
     existingOutputs: Record<string, StepOutputRecord>,
     research?: ResearchPack
-  ): Promise<{ output: string; usage?: TokenUsage; unverifiedUrls?: string[]; error?: string }> => {
+  ): Promise<{ output: string; usage?: TokenUsage; unverifiedUrls?: string[]; layoutReport?: LayoutReport; error?: string }> => {
     const step = activeSteps[stepIndex];
     if (!step) return { output: '', error: 'Step not found' };
 
@@ -335,6 +372,11 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           stepsCompleted: stepIndex + 1,
         });
 
+        const finalStep = activeSteps.find((s) => s.isFinalBlogStep) || activeSteps[activeSteps.length - 1];
+        if (step.id === finalStep?.id && text.trim()) {
+          const checked = await finalizeArticle(text, step.model || project.model || undefined, research);
+          return { output: checked.article, usage, unverifiedUrls: data.unverifiedUrls || [], layoutReport: checked.report };
+        }
         return { output: text, usage, unverifiedUrls: data.unverifiedUrls || [] };
       } catch (err: any) {
         lastError = err.message || 'Execution error';
@@ -395,6 +437,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           completedAt: new Date().toISOString(),
           tokenUsage: result.usage,
           unverifiedUrls: result.unverifiedUrls,
+          layoutReport: result.layoutReport,
           error: undefined,
         },
       };
@@ -490,6 +533,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           completedAt: new Date().toISOString(),
           tokenUsage: result.usage,
           unverifiedUrls: result.unverifiedUrls,
+          layoutReport: result.layoutReport,
           error: undefined,
         };
 
@@ -575,6 +619,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           completedAt: new Date().toISOString(),
           tokenUsage: result.usage,
           unverifiedUrls: result.unverifiedUrls,
+          layoutReport: result.layoutReport,
           error: undefined,
         },
       };
@@ -670,6 +715,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           completedAt: new Date().toISOString(),
           tokenUsage: result.usage,
           unverifiedUrls: result.unverifiedUrls,
+          layoutReport: result.layoutReport,
           error: undefined,
         };
 
@@ -846,7 +892,15 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
         completed: completedCount,
         total: activeSteps.length,
       }
-    : runningIndex >= 0
+    : runningIndex >= 0 && finalizingSince
+      ? {
+          label: `Checking the article against the template and word range`,
+          detail: 'Comparing layout, callouts, closing sections, references and word count, and correcting any differences.',
+          startedAt: finalizingSince,
+          completed: completedCount,
+          total: activeSteps.length,
+        }
+      : runningIndex >= 0
       ? {
           label: `Writing step ${runningIndex + 1} of ${activeSteps.length}: ${activeSteps[runningIndex].title}`,
           detail: `Using ${modelName(activeSteps[runningIndex].model || projectModel) || 'the AI model'}`,
@@ -1389,6 +1443,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
               </div>
             ) : selectedRecord?.output ? (
               <div>
+                {selectedRecord.layoutReport && <LayoutReportPanel report={selectedRecord.layoutReport} />}
                 {Boolean(selectedRecord.unverifiedUrls?.length) && (
                   <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-[11px] space-y-1">
                     <p className="font-semibold flex items-center gap-1.5">
