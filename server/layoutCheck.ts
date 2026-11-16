@@ -417,7 +417,83 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
     }
   }
 
+  issues.push(...contentIssues(markdown));
   return { wordCount, issues };
+}
+
+const STOPWORDS = new Set(
+  'a an the and or but of to in on for with is are be can may might does do not it its this that these those you your what how as at by from than more about have has if which who when would should could there their they them so such was were been being into also only'.split(
+    ' '
+  )
+);
+const contentWords = (s: string) =>
+  new Set((s.toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length > 2 && !STOPWORDS.has(w)).map((w) => w.replace(/s$/, '')));
+
+/**
+ * Content quality checks on the body (before the closing sections): the same point repeated in
+ * different sections, too many "Ask your practitioner" sentences instead of answers, and Evidence
+ * or Research callouts that describe studies without any figures.
+ */
+export function contentIssues(markdown: string): string[] {
+  const issues: string[] = [];
+  const body = markdown.replace(/\r\n/g, '\n').split(/\n(?=##\s+(Myth vs Fact|Key Takeaways|Frequently Asked Questions|Final Thoughts|References))/i)[0];
+  const sections = body.split(/\n(?=##\s)/).map((s) => ({
+    heading: s.match(/^##\s+(.*)/)?.[1]?.trim() || 'Introduction',
+    text: s
+      .split('\n')
+      .filter((l) => !/^#{1,3}\s|^\s*\|/.test(l))
+      .join('\n'),
+  }));
+
+  // The same point made in two different sections.
+  const sentences = sections.flatMap((s, i) =>
+    s.text
+      .replace(/\*\*[^*]+\*\*\n/g, '')
+      .split(/(?<=[.?!])\s+|\n+/)
+      .map((t) => ({ i, heading: s.heading, text: t.replace(/^[-*]\s+/, '').replace(/\*\*/g, '').trim(), words: contentWords(t) }))
+      .filter((t) => t.words.size >= 5)
+  );
+  const repeats: string[] = [];
+  for (let a = 0; a < sentences.length && repeats.length < 6; a++) {
+    for (let b = a + 1; b < sentences.length; b++) {
+      const x = sentences[a];
+      const y = sentences[b];
+      if (x.i === y.i) continue;
+      const shared = [...x.words].filter((w) => y.words.has(w)).length;
+      if (shared / (x.words.size + y.words.size - shared) >= 0.4) {
+        const cut = (t: string) => (t.length > 80 ? `${t.slice(0, 80)}…` : t);
+        repeats.push(`"${cut(x.text)}" ("${x.heading}") repeats "${cut(y.text)}" ("${y.heading}")`);
+        break;
+      }
+    }
+  }
+  if (repeats.length) {
+    issues.push(
+      `Say each point once. These sentences repeat a point already made in another section; keep it where it fits best and replace the repeat with new, useful information from the research: ${repeats.join('; ')}.`
+    );
+  }
+
+  // Too many sentences that send the reader to "ask" instead of informing them.
+  const all = sections
+    .flatMap((s) => s.text.split(/(?<=[.?!])\s+|\n+/))
+    .map((t) => t.replace(/^[-*]\s+/, '').replace(/\*\*[^*]*\*\*:?\s*/g, '').trim())
+    .filter((t) => /[a-z]/i.test(t));
+  const asks = all.filter((t) => /^(Ask|You (can|could|may want to|might) ask|It is worth asking)\b/i.test(t)).length;
+  if (asks > Math.max(6, all.length * 0.06)) {
+    issues.push(
+      `${asks} sentences tell the reader to ask the practitioner. Keep at most ${Math.max(4, Math.floor(all.length * 0.04))}; replace the others with the actual information (what the evidence shows, typical numbers, who it suits, what to expect).`
+    );
+  }
+
+  // Evidence and research callouts must describe studies with figures.
+  const callouts = [...body.matchAll(/^\*\*([^*\n]*(Evidence|Research)[^*\n]*)\*\*:?\s*\n([\s\S]*?)(?=\n\*\*[^*\n]+\*\*:?\s*\n|\n##\s|$)/gim)];
+  const vague = callouts.filter((m) => !/\d/.test(m[3])).map((m) => m[1].trim());
+  if (vague.length) {
+    issues.push(
+      `The ${vague.join(' and ')} callout${vague.length > 1 ? 's' : ''} must describe the study with figures from the research: year, number of participants, protocol and main result (e.g. "a 2017 study of 34 people, 7 treated on the arms, four weekly sessions").`
+    );
+  }
+  return issues;
 }
 
 /** Instructions for one correction pass. */
@@ -425,10 +501,12 @@ export function correctionPrompt(
   markdown: string,
   issues: string[],
   spec: LayoutSpec,
-  sources: { title: string; url: string }[] = []
+  sources: { title: string; url: string; citation?: string }[] = []
 ): string {
   const sourceList = sources.length
-    ? `\nIf a reference must be added, use ONLY these verified research sources, with their exact URLs:\n${sources.map((s) => `- ${s.title}. ${s.url}`).join('\n')}\n`
+    ? `\nIf a reference must be added or corrected, use ONLY these verified sources. Copy the "Cite as" text exactly; never guess authors, years or journals:\n${sources
+        .map((s) => (s.citation ? `- Cite as: ${s.citation}` : `- ${s.title}. ${s.url}`))
+        .join('\n')}\n`
     : '\nDo not invent references; if none can be added from the article itself, leave the list as it is.\n';
   const noPadding =
     '\nNever list the same source (same URL) twice to reach a reference count. If there are not enough distinct sources, leave the list shorter.\n';
@@ -484,7 +562,7 @@ export async function finalizeArticle(
   markdown: string,
   spec: LayoutSpec,
   fix: (prompt: string) => Promise<string>,
-  opts: { maxPasses?: number; sources?: { title: string; url: string }[] } = {}
+  opts: { maxPasses?: number; sources?: { title: string; url: string; citation?: string }[] } = {}
 ): Promise<FinalizeResult> {
   const score = (r: LayoutReport) =>
     r.issues.length * 1000 + Math.max(0, r.wordCount - spec.maxWords, spec.minWords - r.wordCount);

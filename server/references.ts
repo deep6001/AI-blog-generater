@@ -1,12 +1,16 @@
 import { addUsage, webSearch, type ModelInfo, type Usage, type WebSource } from './llm';
+import { metaFromHtml, withCitations, type CitationMeta } from './citations';
+import { findPubmedStudies } from './pubmed';
 
 /** A page on one of the client's approved sites that was checked to cover the topic. */
 export interface ApprovedReference extends WebSource {
   /** page: we opened the page and found the topic; search: the site blocks direct reads, but search cited it for this topic. */
-  checkedBy: 'page' | 'search';
+  checkedBy: 'page' | 'abstract' | 'search';
   matchedTerms: string[];
   /** What the page says about the topic, from the search. */
   note?: string;
+  /** Ready-to-copy Harvard reference built from the page's real authors, year and journal. */
+  citation?: string;
 }
 
 export interface RejectedReference {
@@ -85,7 +89,10 @@ export function pageCoversTopic(text: string, terms: string[]): { covers: boolea
 }
 
 /** Opens a page and returns its title and readable text, or null if it cannot be read as HTML. */
-export async function fetchPageText(url: string, signal?: AbortSignal): Promise<{ title: string; text: string } | null> {
+export async function fetchPageText(
+  url: string,
+  signal?: AbortSignal
+): Promise<{ title: string; text: string; meta: CitationMeta | null } | null> {
   try {
     const res = await fetch(url, {
       redirect: 'follow',
@@ -101,7 +108,7 @@ export async function fetchPageText(url: string, signal?: AbortSignal): Promise<
       .replace(/&nbsp;|&#160;/g, ' ')
       .replace(/&amp;/g, '&')
       .replace(/\s+/g, ' ');
-    return text.length > 200 ? { title, text } : null;
+    return text.length > 200 ? { title, text, meta: metaFromHtml(html) } : null;
   } catch {
     return null;
   }
@@ -110,9 +117,10 @@ export async function fetchPageText(url: string, signal?: AbortSignal): Promise<
 function searchPrompt(topic: string, audience: string | undefined, domains: string[], have: string[], needed: number): string {
   return `Search ONLY these websites (use site: queries): ${domains.join(', ')}
 Find at least ${needed} different pages on them that discuss: "${topic}", or the closest related subject they cover (the condition, treatment or question behind the topic).
+Look FIRST for original studies (trials, case series, cohort studies) of the exact device, product or treatment named in the topic, including studies of earlier versions of it. Then systematic reviews and official guidance.
 Readers: ${audience || 'general readers'}.
 ${have.length ? `Already found, do NOT return these again:\n${have.map((u) => `- ${u}`).join('\n')}\n` : ''}
-For each page, write one bullet: the page title, then exactly what it says that is relevant (findings, numbers, recommendations). Use only what the pages say. Do not use any other website.`;
+For each page, write one bullet: the page title, then exactly what it says that is relevant. For a study give the year, number of participants (and how many were treated on the relevant area), the protocol (sessions and intervals), what was measured, the main result with its figures, and its limitations. Use only what the pages say. Do not use any other website.`;
 }
 
 /** Notes per URL from the search answer: the line each citation appears in. */
@@ -139,7 +147,7 @@ export async function findApprovedReferences(
   const { domains, prefixes } = parseApproved(input.approved);
   const searchDomains = [...new Set([...domains, ...prefixes.map((p) => p.split('/')[0])])];
   const terms = topicTerms(input.topic);
-  const candidates = new Map<string, { title: string; url: string; domain: string; note?: string; fromSearch: boolean }>();
+  const candidates = new Map<string, { title: string; url: string; domain: string; note?: string; fromSearch: boolean; abstract?: boolean }>();
   const searchQueries: string[] = [];
   const rejected: RejectedReference[] = [];
   let usage: Usage = { promptTokens: 0, candidatesTokens: 0, totalTokens: 0 };
@@ -150,6 +158,14 @@ export async function findApprovedReferences(
     const url = raw.trim();
     candidates.set(normUrl(url), { title: url, url, domain: stripWww(new URL(url).hostname), fromSearch: false });
   }
+
+  // Primary studies straight from PubMed, when the client accepts PubMed. Runs alongside the web search.
+  const pubmed = isApproved('https://pubmed.ncbi.nlm.nih.gov/1/', input.approved)
+    ? findPubmedStudies(info, input.topic, AbortSignal.timeout(timeoutMs)).catch((err) => {
+        console.warn('PubMed study search failed:', err?.message || err);
+        return null;
+      })
+    : Promise.resolve(null);
 
   const target = Math.max(input.needed, 3) + 3; // a few spare, some will fail the check
   for (let round = 0; round < 2 && searchDomains.length; round++) {
@@ -182,11 +198,26 @@ export async function findApprovedReferences(
     }
   }
 
+  const studies = await pubmed;
+  if (studies) {
+    usage = addUsage(usage, studies.usage);
+    searchQueries.push(...studies.queries.map((q) => `PubMed: ${q}`));
+    for (const st of studies.studies) {
+      const key = normUrl(st.url);
+      const existing = candidates.get(key);
+      candidates.set(key, { ...(existing || {}), title: st.title, url: st.url, domain: 'pubmed.ncbi.nlm.nih.gov', note: st.note, fromSearch: true, abstract: true });
+    }
+  }
+
   // Open every candidate and confirm the topic is on the page.
+  // PubMed studies were already checked by reading their abstracts.
+  const pageMeta = new Map<string, CitationMeta | null>();
   const signal = AbortSignal.timeout(Math.min(timeoutMs, 30000));
   const checked = await Promise.all(
-    [...candidates.values()].slice(0, 15).map(async (c) => {
+    [...candidates.values()].slice(0, 20).map(async (c) => {
+      if (c.abstract) return { ref: { ...c, checkedBy: 'abstract' as const, matchedTerms: [] } };
       const page = await fetchPageText(c.url, signal);
+      if (page) pageMeta.set(c.url, page.meta);
       if (page) {
         const { covers, matched } = pageCoversTopic(`${page.title} ${page.text}`, terms);
         if (covers) {
@@ -205,12 +236,14 @@ export async function findApprovedReferences(
   for (const r of checked) {
     if (r.reject) rejected.push(r.reject);
     if (r.ref) {
-      const { fromSearch: _f, ...rest } = r.ref;
+      const { fromSearch: _f, abstract: _a, ...rest } = r.ref as typeof r.ref & { abstract?: boolean };
       references.push({ ...rest, id: references.length + 1 });
     }
   }
-  // Pages confirmed by opening them come first.
-  references.sort((a, b) => (a.checkedBy === b.checkedBy ? 0 : a.checkedBy === 'page' ? -1 : 1));
+  // Studies checked from their abstracts and pages confirmed by opening them come first.
+  const rank = { abstract: 0, page: 1, search: 2 };
+  references.sort((a, b) => rank[a.checkedBy] - rank[b.checkedBy]);
   references.forEach((r, i) => (r.id = i + 1));
-  return { references, rejected, searchQueries, usage };
+  const cited = await withCitations(references, pageMeta, AbortSignal.timeout(15000));
+  return { references: cited, rejected, searchQueries, usage };
 }

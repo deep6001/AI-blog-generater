@@ -1,0 +1,135 @@
+// Real citation details (authors, year, title, journal) for reference pages, so the writer copies a
+// correct Harvard reference instead of guessing journals and years from a page title.
+// PubMed and PMC come from NCBI's free E-utilities; other sites from their citation_* meta tags.
+
+export interface CitationMeta {
+  authors: string[]; // "Surname, I.I."
+  year?: string;
+  title?: string;
+  journal?: string;
+  /** Organisation for pages without named authors, e.g. "NHS". */
+  organisation?: string;
+}
+
+const ORGS: Record<string, string> = {
+  'nhs.uk': 'NHS',
+  'nice.org.uk': 'NICE',
+  'gov.uk': 'GOV.UK',
+  'bad.org.uk': 'British Association of Dermatologists',
+  'baaps.org.uk': 'BAAPS',
+  'bapras.org.uk': 'BAPRAS',
+  'fda.gov': 'U.S. Food and Drug Administration',
+  'asa.org.uk': 'Advertising Standards Authority',
+  'cqc.org.uk': 'Care Quality Commission',
+};
+
+const host = (url: string) => {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
+/** "McKnight B" or "McKnight BA" (PubMed) -> "McKnight, B.A." */
+function fromPubmedName(name: string): string {
+  const m = name.trim().match(/^(.*\S)\s+([A-Z]{1,4})$/);
+  return m ? `${m[1]}, ${m[2].split('').join('.')}.` : name.trim();
+}
+
+/** "Smith, John A." or "John A. Smith" (meta tags) -> "Smith, J.A." */
+function fromMetaName(name: string): string {
+  const n = name.trim().replace(/\s+/g, ' ');
+  const [surname, given] = n.includes(',') ? n.split(/,\s*/, 2) : [n.split(' ').pop()!, n.split(' ').slice(0, -1).join(' ')];
+  const initials = (given || '')
+    .split(/[\s.-]+/)
+    .filter(Boolean)
+    .map((g) => `${g[0].toUpperCase()}.`)
+    .join('');
+  return initials ? `${surname}, ${initials}` : surname;
+}
+
+const yearOf = (s?: string) => s?.match(/\b(19|20)\d{2}\b/)?.[0];
+const cleanTitle = (t?: string) => t?.replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim();
+
+/** Citation meta tags from a page's HTML (Highwire/Google Scholar tags used by most journals). */
+export function metaFromHtml(html: string): CitationMeta | null {
+  const tags = [...html.matchAll(/<meta\s+[^>]*>/gi)].map((m) => m[0]);
+  const values = (name: string) =>
+    tags
+      .filter((t) => new RegExp(`(name|property)=["']${name}["']`, 'i').test(t))
+      .map((t) => t.match(/content=["']([^"']*)["']/i)?.[1]?.trim())
+      .filter((v): v is string => Boolean(v));
+  const authors = values('citation_author').map(fromMetaName);
+  const title = values('citation_title')[0];
+  if (!title && !authors.length) return null;
+  return {
+    authors,
+    title: cleanTitle(title),
+    year: yearOf(values('citation_publication_date')[0] || values('citation_date')[0] || values('citation_online_date')[0]),
+    journal: values('citation_journal_title')[0],
+  };
+}
+
+/** PubMed id or PMC number from a URL. */
+export function ncbiId(url: string): { db: 'pubmed' | 'pmc'; id: string } | null {
+  const pm = url.match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i);
+  if (pm) return { db: 'pubmed', id: pm[1] };
+  const pmc = url.match(/(?:pmc\.ncbi\.nlm\.nih\.gov\/articles|ncbi\.nlm\.nih\.gov\/pmc\/articles)\/PMC(\d+)/i);
+  return pmc ? { db: 'pmc', id: pmc[1] } : null;
+}
+
+/** Looks up PubMed and PMC records in one request per database. */
+export async function ncbiMeta(urls: string[], signal?: AbortSignal): Promise<Map<string, CitationMeta>> {
+  const out = new Map<string, CitationMeta>();
+  for (const db of ['pubmed', 'pmc'] as const) {
+    const wanted = urls.map((u) => ({ u, ref: ncbiId(u) })).filter((x) => x.ref?.db === db);
+    if (!wanted.length) continue;
+    try {
+      const ids = [...new Set(wanted.map((w) => w.ref!.id))].join(',');
+      const res = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=${db}&id=${ids}&retmode=json`, { signal });
+      if (!res.ok) continue;
+      const result = (await res.json())?.result || {};
+      for (const w of wanted) {
+        const r = result[w.ref!.id];
+        if (!r?.title) continue;
+        out.set(w.u, {
+          authors: (r.authors || []).filter((a: any) => a.authtype !== 'CollectiveName' || a.name).map((a: any) => fromPubmedName(a.name)),
+          year: yearOf(r.pubdate) || yearOf(r.epubdate),
+          title: cleanTitle(r.title),
+          journal: r.fulljournalname || r.source,
+        });
+      }
+    } catch {
+      /* look-up is best effort */
+    }
+  }
+  return out;
+}
+
+const titleCaseJournal = (j: string) =>
+  /[a-z]/.test(j) && j === j.toLowerCase() ? j : j.replace(/\b([a-z])([a-z]*)\b/g, (w, a, b) => (/^(of|and|the|in|for|on|de|la)$/.test(w) ? w : a.toUpperCase() + b));
+
+/** Harvard reference: Surname, A. et al. (Year) 'Title', Journal. Available at: URL */
+export function harvard(meta: CitationMeta | undefined, fallbackTitle: string, url: string): string {
+  const org = meta?.organisation || ORGS[Object.keys(ORGS).find((d) => host(url) === d || host(url).endsWith(`.${d}`)) || ''];
+  const a = meta?.authors || [];
+  const who = a.length === 0 ? org || '' : a.length === 1 ? a[0] : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a[0]} et al.`;
+  const year = meta?.year || 'no date';
+  const title = cleanTitle(meta?.title) || cleanTitle(fallbackTitle) || url;
+  const journal = meta?.journal ? `, ${titleCaseJournal(meta.journal.replace(/\s*:.*$/, ''))}` : '';
+  return `${who ? `${who} ` : ''}(${year}) '${title}'${journal}. Available at: ${url}`;
+}
+
+/** Adds a ready-to-copy Harvard citation to each source. Page meta can be passed in when already fetched. */
+export async function withCitations<T extends { title: string; url: string }>(
+  sources: T[],
+  pageMeta: Map<string, CitationMeta | null> = new Map(),
+  signal?: AbortSignal
+): Promise<(T & { citation: string })[]> {
+  const ncbi = await ncbiMeta(
+    sources.map((s) => s.url),
+    signal
+  );
+  return sources.map((s) => ({ ...s, citation: harvard(ncbi.get(s.url) ?? pageMeta.get(s.url) ?? undefined, s.title, s.url) }));
+}

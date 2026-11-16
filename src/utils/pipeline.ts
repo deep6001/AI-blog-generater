@@ -358,7 +358,7 @@ export function generateMedicalHtmlDocument(title: string, markdown: string, pro
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title} | Prostate Clinic London</title>
+  <title>${title}</title>
   <style>
     :root {
       --navy-900: #0a1e38;
@@ -624,10 +624,6 @@ export function generateMedicalHtmlDocument(title: string, markdown: string, pro
 <body>
   <div class="article-wrapper">
     <div class="clinic-badge-header">
-      <div>
-        <div class="clinic-brand">Prostate Clinic London</div>
-        <div class="clinic-sub">10 Harley Street, London W1G 9PF &bull; Specialist Urology Care</div>
-      </div>
       <div class="meta-pills">
         <span>📅 ${nowStr}</span>
         <span>⏱️ ${metrics.readingTimeMinutes} min read</span>
@@ -635,32 +631,11 @@ export function generateMedicalHtmlDocument(title: string, markdown: string, pro
       </div>
     </div>
 
-    <div class="author-review-card">
-      <div>
-        <span class="reviewer-title">✓ Clinically Reviewed</span> &bull; <span>Consultant Urological Surgeon</span>
-      </div>
-      <div style="color: var(--slate-600);">
-        Evidence-Based Medical Reference | Strictly Text & Clinical Tables
-      </div>
-    </div>
 
     <main>
       ${bodyHtml}
     </main>
 
-    <div class="consultation-cta-card">
-      <h3>Specialist Consultation & Second Opinions</h3>
-      <p>If you are experiencing persistent or recurring prostate, pelvic, or urinary symptoms, specialist clinical investigation can identify the underlying cause and targeted treatment.</p>
-      <div class="contact-details">
-        <span>📍 10 Harley Street, London W1G 9PF</span>
-        <span>📞 020 3928 7447</span>
-        <span>🌐 prostatecliniclondon.co.uk</span>
-      </div>
-    </div>
-
-    <div class="medical-disclaimer">
-      <strong>Medical Disclaimer:</strong> This publication is produced for informational and educational purposes in accordance with British clinical guidelines (NICE, MHRA, and AUA standards). It does not replace individualized diagnostic assessment or specialist medical consultation. If you develop acute urinary retention, high fever with pelvic pain, or signs of systemic infection, seek immediate emergency medical care.
-    </div>
   </div>
 </body>
 </html>`;
@@ -703,14 +678,7 @@ export function generateWordDocContent(title: string, markdown: string, project:
   </style>
 </head>
 <body>
-  <div class="meta-card">
-    <strong>Prostate Clinic London</strong> &bull; 10 Harley Street, London W1G 9PF<br/>
-    <strong>Clinical Review:</strong> Consultant Urological Surgeon &bull; Formatted Clinical Guide
-  </div>
   ${bodyHtml}
-  <div class="disclaimer">
-    <strong>Medical Disclaimer:</strong> This clinical article is prepared for educational purposes according to current clinical guidelines. It does not constitute individual medical diagnosis or care.
-  </div>
 </body>
 </html>`;
 }

@@ -44,8 +44,11 @@ export const ApprovedReferencesPanel: React.FC<{ research: ResearchPack; needed:
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                   {r.checkedBy === 'page'
                     ? `Page opened, topic found (${r.matchedTerms.join(', ')})`
-                    : 'Site blocks automatic reading; cited by search for this topic'}
+                    : r.checkedBy === 'abstract'
+                      ? 'Study found on PubMed; abstract read and checked'
+                      : 'Site blocks automatic reading; cited by search for this topic'}
                 </div>
+                {r.citation && <div className="text-[11px] text-slate-600 dark:text-slate-300">{r.citation}</div>}
               </div>
             </li>
           ))}

@@ -22,10 +22,7 @@ import {
   ArrowLeft,
   Printer,
   ChevronDown,
-  ShieldCheck,
-  Building2,
   Stethoscope,
-  Info,
   Zap,
   Coins,
 } from 'lucide-react';
@@ -391,7 +388,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
                           Recommended
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-500">Standalone with Prostate Clinic London styles</div>
+                      <div className="text-[11px] text-slate-500">Standalone web page with the article styles</div>
                     </div>
                   </button>
 
@@ -442,60 +439,11 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
             <>
               {viewMode === 'clinical' && (
                 <div className="max-w-3xl mx-auto space-y-6">
-                  {/* London Clinic Authority Header */}
-                  <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                        PCL
-                      </div>
-                      <div>
-                        <div className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                          <span>Prostate Clinic London</span>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-200 font-semibold">
-                            Harley Street
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400">
-                          10 Harley Street, London W1G 9PF &bull; Specialist Urology Care
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                      <ShieldCheck className="w-4 h-4 text-teal-600" />
-                      <span><strong>Reviewed by:</strong> Consultant Urological Surgeon</span>
-                    </div>
-                  </div>
-
                   {/* Rendered Clinical Article */}
                   <div className="prose-content">
                     <MarkdownRenderer content={editableBlog} />
                   </div>
 
-                  {/* London Clinic Consultation CTA Card */}
-                  <div className="p-6 sm:p-8 rounded-3xl bg-linear-to-br from-slate-900 to-teal-950 text-white shadow-xl space-y-4">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/20 text-teal-300 text-xs font-semibold">
-                      <Building2 className="w-3.5 h-3.5" />
-                      <span>Harley Street Specialist Care</span>
-                    </div>
-                    <h3 className="text-xl font-bold">Specialist Consultation & Second Opinions</h3>
-                    <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-2xl">
-                      If you are experiencing persistent or recurring prostate, pelvic, or urinary symptoms, specialist urological investigation can pinpoint the underlying cause and determine a targeted, culture-guided treatment plan.
-                    </p>
-                    <div className="pt-2 flex flex-wrap gap-4 text-xs font-medium">
-                      <span className="px-3 py-1.5 rounded-xl bg-white/10 backdrop-blur-xs">📍 10 Harley Street, London W1G 9PF</span>
-                      <span className="px-3 py-1.5 rounded-xl bg-white/10 backdrop-blur-xs">📞 020 3928 7447</span>
-                      <span className="px-3 py-1.5 rounded-xl bg-white/10 backdrop-blur-xs">🌐 prostatecliniclondon.co.uk</span>
-                    </div>
-                  </div>
-
-                  {/* Medical Disclaimer */}
-                  <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-400 leading-relaxed flex items-start gap-2.5">
-                    <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                    <div>
-                      <strong>Medical Disclaimer:</strong> This publication is produced for informational and educational purposes in accordance with British clinical guidelines (NICE, MHRA, and AUA standards). It does not replace individualized diagnostic assessment or specialist medical consultation. If you develop acute urinary retention, high fever with pelvic pain, or signs of systemic infection, seek immediate emergency medical care.
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -552,7 +500,7 @@ export const FinalBlogView: React.FC<FinalBlogViewProps> = ({
                 No Final Blog Output Delivered Yet
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                Head over to the Studio, select or input your topic, and execute the 5 clinical stages to generate the Prostate Clinic London formatted blog.
+                Head over to the Studio, select or input your topic, and run the pipeline to generate the blog.
               </p>
               <button
                 onClick={onBackToStudio}

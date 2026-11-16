@@ -221,7 +221,13 @@ app.post('/api/finalize', requireUser, async (req, res) => {
     internalLinkUrls: (profile?.internalLinks.match(/https?:\/\/[^\s|)]+/g) || []).map((u) => u.replace(/[.,]+$/, '')),
   });
   const validSources = Array.isArray(sources)
-    ? sources.filter((s: any) => typeof s?.url === 'string').map((s: any) => ({ title: String(s.title || s.url), url: s.url }))
+    ? sources
+        .filter((s: any) => typeof s?.url === 'string')
+        .map((s: any) => ({
+          title: String(s.title || s.url),
+          url: s.url,
+          citation: typeof s.citation === 'string' ? s.citation : undefined,
+        }))
     : [];
   const approved = Array.isArray(approvedSources) ? approvedSources.filter((s: unknown) => typeof s === 'string') : [];
   if (approved.length) {

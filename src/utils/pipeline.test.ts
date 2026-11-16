@@ -107,8 +107,8 @@ test('generateMedicalHtmlDocument produces styled clinical HTML with zero images
 
   const html = generateMedicalHtmlDocument('Why Does Prostatitis Keep Coming Back?', sampleMd, projects[0]);
   assert.ok(html.includes('<!DOCTYPE html>'));
-  assert.ok(html.includes('Prostate Clinic London'));
-  assert.ok(html.includes('10 Harley Street'));
+  assert.ok(!html.includes('Prostate Clinic London'), 'No hard-coded clinic branding');
+  assert.ok(!html.includes('Medical Disclaimer'), 'No hard-coded disclaimer');
   assert.ok(html.includes('clinical-table'));
   assert.ok(html.includes('Research Insight'));
   assert.ok(!html.includes('https://example.com/test.png'), 'Strictly no images should exist in generated HTML');
@@ -119,7 +119,7 @@ test('generateWordDocContent produces Word XML/HTML format', () => {
   const sampleMd = `# Clinical Guide\n\nClinical body paragraph.`;
   const doc = generateWordDocContent('Clinical Guide', sampleMd, projects[0]);
   assert.ok(doc.includes('xmlns:w="urn:schemas-microsoft-com:office:word"'));
-  assert.ok(doc.includes('Prostate Clinic London'));
+  assert.ok(!doc.includes('Prostate Clinic London'), 'No hard-coded clinic branding');
 });
 
 test('generatePlainTextDocument strips formatting and images', () => {

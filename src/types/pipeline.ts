@@ -80,13 +80,16 @@ export interface ResearchSource {
   title: string;
   url: string;
   domain: string;
+  /** Ready-to-copy Harvard reference with the real authors, year and journal. */
+  citation?: string;
 }
 
 export interface ApprovedReference extends ResearchSource {
   /** page: opened and the topic was found on it; search: the site blocks direct reads, so the search citation is used. */
-  checkedBy: 'page' | 'search';
+  checkedBy: 'page' | 'abstract' | 'search';
   matchedTerms: string[];
   note?: string;
+  citation?: string;
 }
 
 export interface ResearchPack {
