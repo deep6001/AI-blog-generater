@@ -46,6 +46,8 @@ ${words(15)}
 
 ${words(body)}
 
+${words(body)}
+
 ## Myth vs Fact
 
 | Myth | Fact |
@@ -77,9 +79,8 @@ Book a consultation about [acne treatment in London](https://clinic.example/acne
 2. NICE (2023) Acne vulgaris. Available at: https://www.nice.org.uk/guidance/ng198
 `;
 
-test('specFromOutline reads paragraph limit, callouts, closing sections and FAQ count from the template', () => {
+test('specFromOutline reads callouts, closing sections, FAQ count and the exact section patterns', () => {
   const spec = specFromOutline(outline, base);
-  assert.equal(spec.parasPerSection, 2);
   assert.deepEqual(spec.callouts, ['Clinical Note']);
   assert.deepEqual(spec.closing.map((c) => [c.heading, c.kinds.join(',')]), [
     ['Myth vs Fact', 'table'],
@@ -89,6 +90,11 @@ test('specFromOutline reads paragraph limit, callouts, closing sections and FAQ 
     ['References', 'numbered'],
   ]);
   assert.equal(spec.faqCount, 2);
+  assert.deepEqual(spec.patterns.intro, ['para', 'para']);
+  assert.deepEqual(
+    spec.patterns.body.map((p) => p.blocks.join(',')),
+    ['para,para,callout,para,para', 'para,para']
+  );
 });
 
 test('an article that follows the template passes with no issues', () => {
@@ -109,7 +115,7 @@ test('extra paragraphs, text after closing tables and lists, missing callouts an
     .replace('- two\n', '- two\n\nAnother summary paragraph.\n')
     .replace('[acne treatment in London](https://clinic.example/acne)', 'acne treatment');
   const issues = checkLayout(bad, specFromOutline(outline, base)).issues.join('\n');
-  assert.match(issues, /at most 2 paragraphs[\s\S]*"Second Question\?" \(3 paragraphs\)/);
+  assert.match(issues, /"Second Question\?" has 4 paragraphs; make it 2 paragraphs/);
   assert.match(issues, /\*\*Clinical Note\*\*/);
   assert.match(issues, /"Myth vs Fact" section must contain only a table[\s\S]*a table, then a paragraph/);
   assert.match(issues, /"Key Takeaways" section must contain only a bulleted list/);
@@ -157,63 +163,73 @@ test('dedupeReferences drops repeated sources and renumbers the list', async () 
   assert.ok(!out.includes('limitations'));
 });
 
-test("callouts need the sample's paragraph count, their own section and the References heading text", async () => {
+test('two callouts in one section, or a short callout, break the callout pattern', async () => {
   const { dedupeReferences } = await import('./layoutCheck');
   const spec = specFromOutline(outline, base);
-  assert.equal(spec.calloutParas, 2);
   assert.equal(spec.referencesHeading, 'References:');
   const twoParaNote = `**Clinical Note**\n${words(15)}\n\n${words(15)}\n`;
   const crowded = good().replace(twoParaNote, `**Clinical Note**\n${words(15)}\n\n**Evidence Note**\n${words(15)}\n`);
   const issues = checkLayout(crowded, { ...spec, callouts: ['Clinical Note', 'Evidence Note'] }).issues.join('\n');
-  assert.match(issues, /followed by 2 paragraphs[\s\S]*Clinical Note \(1\)/);
-  assert.match(issues, /different body section[\s\S]*"First Question\?" \(Clinical Note, Evidence Note\)/);
+  assert.match(
+    issues,
+    /"First Question\?" has 2 paragraphs, then a bold callout label on its own line, then 1 paragraph, then a bold callout label/
+  );
   assert.match(dedupeReferences(good().replace('## References:', '## References'), 'References:'), /^## References:$/m);
 });
 
-test('a sample with a bold lead-in body list requires one in the article', () => {
-  const withList = outline.replace(
-    '## Second Question?\n',
-    '## Second Question?\n[Bulleted list, 3 items, each starting with a bold lead-in. e.g. "x"]\n'
-  );
-  const spec = specFromOutline(withList, base);
-  assert.equal(spec.bodyLeadInList, true);
-  assert.match(checkLayout(good(), spec).issues.join('\n'), /bold lead-in/);
-  const fixed = good().replace('## Second Question?\n\n', '## Second Question?\n\n- **Redness:** common.\n- **Stinging:** brief.\n\n');
-  assert.doesNotMatch(checkLayout(fixed, spec).issues.join('\n'), /bold lead-in/);
-});
+// A sample shaped like the real one: plain, callout, table-only and paragraph-list-paragraph sections.
+const shapedOutline = outline.replace(
+  '## Second Question?\n[2 paragraphs, ~40 words each]\n',
+  '## Second Question?\n[2 paragraphs, ~40 words each]\n## How the Options Compare\n[Table: 2 columns (A | B), 3 rows, bold header row]\n## What Side Effects Can It Cause?\n[1 paragraph, ~30 words]\n[Bulleted list, 4 items, each starting with a bold lead-in. e.g. "x"]\n[1 paragraph, ~30 words]\n'
+);
+const table2 = '| A | B |\n| --- | --- |\n| x | y |\n';
+const list4 = '- **Redness:** common.\n- **Stinging:** brief.\n- **Dryness:** mild.\n- **Peeling:** rare.\n';
+const listSection = (intro: string, list = list4) => `## What Side Effects Can It Cause?\n\n${intro}${list}\n${words(15)}\n\n`;
+const shaped = (tableSec = `## How the Options Compare\n\n${table2}\n`, listSec = listSection(`${words(20)}\n\n`)) =>
+  good().replace('## Myth vs Fact', `${tableSec}${listSec}## Myth vs Fact`);
 
-test('body tables and lists must have exactly the sample section shapes', () => {
-  const shapedOutline = outline.replace(
-    '## Second Question?\n[2 paragraphs, ~40 words each]\n',
-    '## Second Question?\n[2 paragraphs, ~40 words each]\n## How the Options Compare\n[Table: 2 columns (A | B), 3 rows, bold header row]\n## What Side Effects Can It Cause?\n[1 paragraph, ~30 words]\n[Bulleted list, 3 items, each starting with a bold lead-in. e.g. "x"]\n[1 paragraph, ~30 words]\n'
-  );
+test('an article with every sample pattern in place passes', () => {
   const spec = specFromOutline(shapedOutline, base);
-  assert.deepEqual(spec.tableSection, ['table']);
-  assert.deepEqual(spec.listSection, ['para', 'bullets', 'para']);
-
-  const table = '| A | B |\n| --- | --- |\n| x | y |\n';
-  const list = '- **Redness:** common.\n- **Stinging:** brief.\n';
-  const right = good().replace(
-    '## Myth vs Fact',
-    `## How the Options Compare\n\n${table}\n## What Side Effects Can It Cause?\n\n${words(20)}\n\n${list}\n${words(15)}\n\n## Myth vs Fact`
-  );
-  assert.deepEqual(checkLayout(right, spec).issues.filter((i) => /shape/.test(i)), []);
-
-  const wrong = good().replace(
-    '## Myth vs Fact',
-    `## Choosing a Practitioner?\n\n${words(20)}\n\n${words(20)}\n\n${table}\n## What Side Effects Can It Cause?\n\n${list}\n## Myth vs Fact`
-  );
-  const issues = checkLayout(wrong, spec).issues.join('\n');
-  assert.match(issues, /own "## " heading[\s\S]*"Choosing a Practitioner\?" \(has paragraph\(s\) -> table\)/);
-  assert.match(issues, /introductory paragraph[\s\S]*"What Side Effects Can It Cause\?" \(has bulleted list\)/);
+  assert.equal(spec.patterns.body.length, 4);
+  assert.deepEqual(checkLayout(shaped(), spec).issues, []);
 });
 
-test('a missing lead-in list names the section to convert', () => {
-  const withList = outline.replace(
-    '## Second Question?\n',
-    '## Second Question?\n[Bulleted list, 3 items, each starting with a bold lead-in. e.g. "x"]\n'
+test('a callout straight after a heading, or extra paragraphs before a list, break the patterns', () => {
+  const spec = specFromOutline(shapedOutline, base);
+  const md = shaped(undefined, listSection(`${words(20)}\n\n${words(20)}\n\n`)).replace(
+    `## First Question?\n\n${words(30)}\n\n${words(30)}\n\n**Clinical Note**`,
+    '## First Question?\n\n**Clinical Note**'
   );
-  const spec = specFromOutline(withList, base);
-  const md = good().replace('## Second Question?', '## What Side Effects Can It Cause?');
-  assert.match(checkLayout(md, spec).issues.join('\n'), /Convert the body section "What Side Effects Can It Cause\?"/);
+  const issues = checkLayout(md, spec).issues.join('\n');
+  assert.match(
+    issues,
+    /"First Question\?" has a bold callout label on its own line, then 2 paragraphs; make it 2 paragraphs, then a bold callout label/
+  );
+  assert.match(
+    issues,
+    /"What Side Effects Can It Cause\?" has 2 paragraphs, then a bulleted list, then 1 paragraph; make it 1 paragraph, then a bulleted list/
+  );
+});
+
+test('table columns, lead-ins and list length must match the sample', () => {
+  const spec = specFromOutline(shapedOutline, base);
+  const md = shaped(
+    '## How the Options Compare\n\n| A | B | C |\n| --- | --- | --- |\n| x | y | z |\n\n',
+    listSection(`${words(20)}\n\n`, '- Redness.\n- **Stinging:** brief.\n')
+  );
+  const issues = checkLayout(md, spec).issues.join('\n');
+  assert.match(issues, /has 3 columns; the sample's has 2/);
+  assert.match(issues, /must start with a bold lead-in/);
+  assert.match(issues, /has 2 items; the sample's has 4/);
+});
+
+test('a missing list or table section is named, and an extra one is flagged', () => {
+  const spec = specFromOutline(shapedOutline, base);
+  const noList = shaped(undefined, '').replace('## Second Question?', '## What Side Effects Can It Cause?');
+  assert.match(
+    checkLayout(noList, spec).issues.join('\n'),
+    /Convert the body section "What Side Effects Can It Cause\?" into exactly: 1 paragraph, then a bulleted list/
+  );
+  const twoTables = shaped(`## How the Options Compare\n\n${table2}\n## Another Comparison\n\n${table2}\n`);
+  assert.match(checkLayout(twoTables, spec).issues.join('\n'), /exactly 1 body table section; this article has 2/);
 });

@@ -1,3 +1,4 @@
+import { patternsFromOutline, patternsText } from './samplePatterns';
 // Reads an approved sample article (.docx) and describes its layout, so new blogs can follow it
 // without copying its wording. Produces a Markdown-like outline plus the document's styling.
 import { unzipSync, strFromU8 } from 'fflate';
@@ -195,5 +196,8 @@ export function sampleContext(outline: string, wordCount?: number | null): strin
 The client approved the article outlined below as the model for every blog. Match its structure: the order and type of sections, Title Case question-style headings, paragraphs per section and their length, where tables, bold-label callouts and lists appear, and the exact closing sections and their formats.${wordCount ? ` The sample is about ${wordCount} words.` : ''}
 Headings shown are examples of style only. Write about the new topic, and never copy the sample's wording or facts.
 
-${outline}`;
+${outline}
+
+${patternsText(patternsFromOutline(outline))}
+Do not invent other section layouts: no callout straight after a heading, no extra paragraph before or after a list or table.`;
 }

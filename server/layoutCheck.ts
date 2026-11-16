@@ -1,32 +1,28 @@
 import { isApproved } from './references';
+import { describeBlocks, patternsFromOutline, patternsText, type PatternBlock, type SamplePatterns, type SectionPattern } from './samplePatterns';
 // Checks a finished article against the client's sample template and word range, and builds the
 // instructions for a correction pass. The checks are deterministic so the model can't "agree"
-// that it followed the format when it didn't.
+// that it followed the format when it didn't. Body sections are compared with the sample's exact
+// section patterns, so a layout the sample never uses is caught even if no rule names it.
 
 export type BlockKind = 'para' | 'table' | 'bullets' | 'numbered' | 'faq' | 'callout';
 
 export interface Section {
   heading: string;
-  blocks: { kind: BlockKind; label?: string; leadIn?: boolean }[];
+  blocks: { kind: BlockKind; label?: string; leadIn?: boolean; cols?: number; items?: number }[];
 }
 
 export interface LayoutSpec {
   minWords: number;
   maxWords: number;
-  /** Most paragraphs allowed in a row inside a body section or callout. */
-  parasPerSection: number;
   callouts: string[];
   /** Closing sections in order, with the only block kinds each may contain. */
   closing: { heading: string; kinds: BlockKind[] }[];
   faqCount: number;
   /** Paragraphs that follow each callout label in the sample. */
   calloutParas: number;
-  /** The sample has a body bulleted list whose items start with a bold lead-in. */
-  bodyLeadInList: boolean;
-  /** Exact block sequence of the sample's body section that holds a table, e.g. [table]. */
-  tableSection: BlockKind[] | null;
-  /** Exact block sequence of the sample's body section that holds a list, e.g. [para, bullets, para]. */
-  listSection: BlockKind[] | null;
+  /** The sample's exact intro and body section patterns. */
+  patterns: SamplePatterns;
   /** Exact References heading text used by the sample, e.g. "References:". */
   referencesHeading: string;
   minReferences: number;
@@ -38,7 +34,7 @@ export interface LayoutSpec {
 
 type SpecBase = Omit<
   LayoutSpec,
-  'parasPerSection' | 'callouts' | 'closing' | 'faqCount' | 'calloutParas' | 'bodyLeadInList' | 'tableSection' | 'listSection' | 'referencesHeading'
+  'callouts' | 'closing' | 'faqCount' | 'calloutParas' | 'patterns' | 'referencesHeading'
 >;
 
 export interface LayoutReport {
@@ -86,9 +82,14 @@ export function parseSections(markdown: string): Section[] {
   const classify = (group: string[]) => {
     const sec = sections[sections.length - 1];
     const first = group[0].trim();
-    if (first.startsWith('|')) return sec.blocks.push({ kind: 'table' });
-    if (/^[-*+]\s/.test(first)) return sec.blocks.push({ kind: 'bullets', leadIn: /^[-*+]\s+\*\*[^*]+\*\*/.test(first) });
-    if (/^\d+[.)]\s/.test(first)) return sec.blocks.push({ kind: 'numbered' });
+    if (first.startsWith('|')) {
+      return sec.blocks.push({ kind: 'table', cols: first.replace(/^\||\|$/g, '').split('|').length });
+    }
+    const items = group.filter((l) => /^\s*([-*+]|\d+[.)])\s/.test(l));
+    if (/^[-*+]\s/.test(first)) {
+      return sec.blocks.push({ kind: 'bullets', leadIn: items.every((l) => /^\s*[-*+]\s+\*\*[^*]+\*\*/.test(l)), items: items.length });
+    }
+    if (/^\d+[.)]\s/.test(first)) return sec.blocks.push({ kind: 'numbered', items: items.length });
     if (first.startsWith('>')) {
       const label = first.replace(/^>\s*/, '').match(/^\*\*([^*]+?):?\*\*/)?.[1];
       sec.blocks.push(label ? { kind: 'callout', label: label.replace(/:$/, '') } : { kind: 'para' });
@@ -154,7 +155,6 @@ const mostCommon = (values: number[], fallback: number) => {
 export function specFromOutline(outline: string | null | undefined, base: SpecBase): LayoutSpec {
   const defaults: LayoutSpec = {
     ...base,
-    parasPerSection: 2,
     callouts: ['Clinical Note', 'UK Guidance Note', 'Evidence Note', 'Research Insight'],
     closing: [
       { heading: 'Myth vs Fact', kinds: ['table'] },
@@ -165,32 +165,23 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
     ],
     faqCount: 10,
     calloutParas: 2,
-    bodyLeadInList: true,
-    tableSection: ['table'],
-    listSection: ['para', 'bullets', 'para'],
+    patterns: patternsFromOutline(null),
     referencesHeading: 'References:',
   };
   if (!outline) return defaults;
 
   const lines = outline.split('\n');
   const callouts = [...new Set(lines.map((l) => l.match(/^\*\*(.+?)\*\*/)?.[1]).filter((x): x is string => Boolean(x)))];
-  const runs: number[] = [];
   const calloutRuns: number[] = [];
   const closing: LayoutSpec['closing'] = [];
   let faqCount = defaults.faqCount;
-  let bodyLeadInList = false;
   let referencesHeading = defaults.referencesHeading;
   let inClosing: LayoutSpec['closing'][number] | null = null;
-  // Block sequence of each body section, leaving out callouts and their paragraphs.
-  const bodySections: BlockKind[][] = [];
-  let bodyKinds: BlockKind[] | null = null;
 
   for (const [i, l] of lines.entries()) {
     const h = l.match(/^##\s+(.*)$/);
     if (h) {
       const key = closingKey(h[1]);
-      bodyKinds = key ? null : [];
-      if (bodyKinds) bodySections.push(bodyKinds);
       inClosing = key ? { heading: key, kinds: [] } : null;
       if (inClosing) closing.push(inClosing);
       if (key === 'References') referencesHeading = h[1].trim();
@@ -201,59 +192,52 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
       if (after) calloutRuns.push(after);
       continue;
     }
-    if (!inClosing && /^\[Bulleted list.*bold lead-in/.test(l)) bodyLeadInList = true;
-    const paras = Number(l.match(/^\[(\d+) paragraphs?/)?.[1] || 0);
-    const kinds: BlockKind[] = l.startsWith('[Table')
-      ? ['table']
-      : /^\[Bulleted list/.test(l)
-        ? ['bullets']
-        : /^\[Numbered list/.test(l)
-          ? ['numbered']
-          : /FAQ items/.test(l)
-            ? ['faq']
-            : paras
-              ? Array(paras).fill('para')
-              : [];
     const faq = l.match(/^\[(\d+) FAQ items/);
     if (faq) faqCount = Number(faq[1]);
-    if (inClosing) inClosing.kinds.push(...kinds);
-    else if (paras && !lines[i - 1]?.startsWith('**')) runs.push(paras);
-    if (bodyKinds && !lines[i - 1]?.startsWith('**')) bodyKinds.push(...(paras ? (['para'] as BlockKind[]) : kinds));
+    if (!inClosing) continue;
+    const paras = Number(l.match(/^\[(\d+) paragraphs?/)?.[1] || 0);
+    inClosing.kinds.push(
+      ...(l.startsWith('[Table')
+        ? (['table'] as BlockKind[])
+        : /^\[Bulleted list/.test(l)
+          ? (['bullets'] as BlockKind[])
+          : /^\[Numbered list/.test(l)
+            ? (['numbered'] as BlockKind[])
+            : /FAQ items/.test(l)
+              ? (['faq'] as BlockKind[])
+              : (Array(paras).fill('para') as BlockKind[]))
+    );
   }
-  // Paragraph runs count as one "para" slot here; the paragraph limit is checked separately.
-  const tableSection = bodySections.find((k) => k.includes('table')) ?? null;
-  const listSection = bodySections.find((k) => k.includes('bullets')) ?? null;
 
-  // Most common lengths, so one exception in the sample doesn't loosen the rule.
   return {
     ...base,
-    parasPerSection: mostCommon(runs, 2),
     callouts: callouts.length ? callouts : defaults.callouts,
     closing: closing.length ? closing.map((c) => ({ ...c, kinds: collapse(c.kinds) })) : defaults.closing,
     faqCount,
     calloutParas: mostCommon(calloutRuns, defaults.calloutParas),
-    bodyLeadInList,
-    tableSection,
-    listSection,
+    patterns: patternsFromOutline(outline),
     referencesHeading,
   };
 }
 
-/** A body section's shape: consecutive paragraphs become one "para", callouts and their text are left out. */
-function sectionShape(s: Section): BlockKind[] {
-  const shape: BlockKind[] = [];
-  let inCallout = false;
+/** A section's exact blocks in pattern terms; list items split by blank lines count as one list. */
+function sectionBlocks(s: Section): { blocks: PatternBlock[]; tableCols?: number; listItems: number; leadIn: boolean } {
+  const blocks: PatternBlock[] = [];
+  let tableCols: number | undefined;
+  let listItems = 0;
+  let leadIn = true;
   for (const b of s.blocks) {
-    if (b.kind === 'callout') {
-      inCallout = true;
-      continue;
+    const kind: PatternBlock =
+      b.kind === 'callout' ? 'callout' : b.kind === 'table' ? 'table' : b.kind === 'bullets' || b.kind === 'numbered' ? 'list' : 'para';
+    if (kind === 'table') tableCols ??= b.cols;
+    if (kind === 'list') {
+      listItems += b.items || 0;
+      leadIn &&= !!b.leadIn;
+      if (blocks[blocks.length - 1] === 'list') continue;
     }
-    if (b.kind === 'para' && inCallout) continue;
-    inCallout = false;
-    if (b.kind === 'para' && shape[shape.length - 1] === 'para') continue;
-    shape.push(b.kind);
+    blocks.push(kind);
   }
-  return shape;
+  return { blocks, tableCols, listItems, leadIn: leadIn && blocks.includes('list') };
 }
 
 const LIST_HEADING =
@@ -300,93 +284,79 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
   const sections = parseSections(markdown);
   const body = sections.filter((s) => s.heading && !closingKey(s.heading));
 
-  // Paragraph runs: in body sections and after callout labels.
-  const long: string[] = [];
-  for (const s of body) {
-    let run = 0;
-    for (const b of [...s.blocks, { kind: 'table' as BlockKind }]) {
-      if (b.kind === 'para') run++;
-      else {
-        if (run > spec.parasPerSection) long.push(`"${s.heading}" (${run} paragraphs)`);
-        run = 0;
-      }
-    }
-  }
-  if (long.length) {
-    issues.push(
-      `Use at most ${spec.parasPerSection} paragraphs per section and per callout, as in the sample. Shorten: ${long.slice(0, 12).join('; ')}${long.length > 12 ? ` and ${long.length - 12} more` : ''}.`
-    );
-  }
-
   const usedCallouts = new Set(sections.flatMap((s) => s.blocks.filter((b) => b.kind === 'callout').map((b) => b.label?.toLowerCase())));
   const missing = spec.callouts.filter((c) => !usedCallouts.has(c.toLowerCase()));
   if (missing.length) {
+    const calloutPattern = spec.patterns.body.find((p) => p.blocks.includes('callout'));
     issues.push(
-      `Add the missing callout block${missing.length > 1 ? 's' : ''} ${missing.map((m) => `**${m}**`).join(', ')}: the bold label alone on its own line, then ${spec.calloutParas} paragraph${spec.calloutParas === 1 ? '' : 's'}, inside a body section that has no other callout.`
+      `Add the missing callout block${missing.length > 1 ? 's' : ''} ${missing.map((m) => `**${m}**`).join(', ')}, each in its own body section shaped exactly as: ${
+        calloutPattern ? describeBlocks(calloutPattern.blocks) : `the bold label alone on its own line, then ${spec.calloutParas} paragraphs`
+      }.`
     );
   }
 
-  // Each callout is followed by the sample's number of paragraphs, and sits in its own section.
-  const shortCallouts: string[] = [];
-  const crowded: string[] = [];
-  for (const s of body) {
-    const labels: string[] = [];
-    s.blocks.forEach((b, i) => {
-      if (b.kind !== 'callout' || !b.label) return;
-      labels.push(b.label);
-      let n = 0;
-      while (s.blocks[i + 1 + n]?.kind === 'para') n++;
-      if (n < spec.calloutParas) shortCallouts.push(`${b.label} (${n})`);
-    });
-    if (labels.length > 1) crowded.push(`"${s.heading}" (${labels.join(', ')})`);
-  }
-  if (shortCallouts.length) {
-    issues.push(
-      `Each callout must be followed by ${spec.calloutParas} paragraphs, as in the sample. Expand: ${shortCallouts.join('; ')}.`
-    );
-  }
-  if (crowded.length) {
-    issues.push(`Place each callout in a different body section, as in the sample. Separate: ${crowded.join('; ')}.`);
-  }
-
-  // Sections holding a table or a list must have exactly the sample's shape.
-  const shapeName = (k: BlockKind[]) =>
-    k.map((x) => (x === 'para' ? 'paragraph(s)' : KIND_NAMES[x])).join(' -> ');
-  for (const [kind, expected, how] of [
-    [
-      'table',
-      spec.tableSection,
-      'Give each body table its own "## " heading (a short descriptive title, e.g. "How ADT, Abiraterone and Prednisolone Work Together") with nothing else in that section: no paragraphs before or after the table.',
-    ],
-    [
-      'bullets',
-      spec.listSection,
-      'Write the list section as: one short introductory paragraph, then the bulleted list with bold lead-ins, then one short closing paragraph.',
-    ],
-  ] as const) {
-    if (!expected) continue;
-    const wrong = body.filter((s) => {
-      const shape = sectionShape(s);
-      return shape.includes(kind) && shape.join() !== expected.join();
-    });
+  // Every body section must match one of the sample's section patterns exactly.
+  const { intro, body: patterns } = spec.patterns;
+  const has = (blocks: PatternBlock[], b: PatternBlock) => blocks.includes(b);
+  const plainPattern = [...patterns].filter((p) => !p.blocks.some((b) => b !== 'para')).sort((a, b) => b.count - a.count)[0];
+  const targetFor = (blocks: PatternBlock[]): SectionPattern | undefined =>
+    (['callout', 'table', 'list'] as PatternBlock[]).map((k) => (has(blocks, k) ? patterns.find((p) => has(p.blocks, k)) : undefined)).find(Boolean) ??
+    (['callout', 'table', 'list'].some((k) => has(blocks, k as PatternBlock)) ? undefined : plainPattern);
+  if (patterns.length) {
+    const wrong: string[] = [];
+    const details: string[] = [];
+    for (const s of body) {
+      const got = sectionBlocks(s);
+      const match = patterns.find((p) => p.blocks.join() === got.blocks.join());
+      if (!match) {
+        const target = targetFor(got.blocks) ?? plainPattern;
+        wrong.push(`"${s.heading}" has ${describeBlocks(got.blocks)}; make it ${target ? describeBlocks(target.blocks, target) : 'like the sample'}`);
+        continue;
+      }
+      if (match.tableCols && got.tableCols && got.tableCols !== match.tableCols) {
+        details.push(`the table in "${s.heading}" has ${got.tableCols} columns; the sample's has ${match.tableCols}`);
+      }
+      if (match.leadIn && !got.leadIn) {
+        details.push(`every bullet in "${s.heading}" must start with a bold lead-in ("- **Lead-in:** explanation.")`);
+      }
+      if (match.listItems && got.listItems < Math.max(3, match.listItems - 2)) {
+        details.push(`the list in "${s.heading}" has ${got.listItems} items; the sample's has ${match.listItems}, so give at least ${Math.max(3, match.listItems - 2)}`);
+      }
+    }
     if (wrong.length) {
-      issues.push(
-        `${how} The sample's shape is: ${shapeName(expected)}. Fix: ${wrong.map((s) => `"${s.heading}" (has ${shapeName(sectionShape(s))})`).join('; ')}.`
-      );
+      issues.push(`Every body section must match one of the sample's section patterns exactly (same number of paragraphs in the same places). Fix: ${wrong.join('; ')}.`);
+    }
+    if (details.length) issues.push(`Match the sample: ${details.join('; ')}.`);
+
+    // Table and list sections appear exactly as often as in the sample.
+    for (const kind of ['table', 'list'] as PatternBlock[]) {
+      const p = patterns.find((x) => has(x.blocks, kind));
+      const n = body.filter((s) => has(sectionBlocks(s).blocks, kind)).length;
+      const want = p?.count ?? 0;
+      if (n === want) continue;
+      const name = kind === 'table' ? 'table section' : 'list section';
+      if (n > want) {
+        issues.push(
+          want
+            ? `The sample has exactly ${want} body ${name}${want > 1 ? 's' : ''}; this article has ${n}. Rewrite the extra one${n - want > 1 ? 's' : ''} as ${describeBlocks(plainPattern?.blocks ?? ['para', 'para'])}.`
+            : `The sample has no body ${name}; rewrite ${n > 1 ? 'those sections' : 'that section'} as ${describeBlocks(plainPattern?.blocks ?? ['para', 'para'])}.`
+        );
+      } else if (kind === 'list') {
+        const target = listCandidate(body);
+        issues.push(
+          `The sample has ${want} body list section${want > 1 ? 's' : ''} but this article has ${n}. Convert ${target ? `the body section "${target}"` : 'a body section that covers several items'} into exactly: ${describeBlocks(p!.blocks, p)}. Build the bullets from that section's existing points so the word count stays about the same. Keep its heading.`
+        );
+      } else {
+        issues.push(
+          `The sample has ${want} body table section${want > 1 ? 's' : ''} but this article has ${n}. Add one with its own short descriptive "## " heading (e.g. "${p!.example}") containing only ${describeBlocks(p!.blocks, p)}, built from points the article already makes.`
+        );
+      }
     }
   }
-
-  if (spec.bodyLeadInList) {
-    const hasLeadIn = body.some((s) => s.blocks.some((b) => b.kind === 'bullets' && b.leadIn));
-    if (!hasLeadIn) {
-      const target = listCandidate(body);
-      issues.push(
-        (target
-          ? `The sample has a bulleted list with bold lead-ins but this article has none. Convert the body section "${target}" into this exact shape: `
-          : 'The sample has a bulleted list with bold lead-ins but this article has none. Convert one body section that covers several items into this exact shape: ') +
-          'one short introductory paragraph, then 4 to 8 bullets each written as "- **Lead-in:** one-sentence explanation.", then one short closing paragraph. ' +
-          "Build the bullets from that section's existing points so the word count stays about the same. Keep its heading."
-      );
+  if (intro) {
+    const got = sectionBlocks(sections[0]).blocks;
+    if (got.join() !== intro.join()) {
+      issues.push(`Under the title, before the first "## " heading, write exactly ${describeBlocks(intro)} (found ${describeBlocks(got)}).`);
     }
   }
 
@@ -466,7 +436,9 @@ export function correctionPrompt(
 
 ${issues.map((i, n) => `${n + 1}. ${i}`).join('\n')}
 
-Fix EVERY problem in the list: structure problems are as important as the word count, so do not skip any. Keep the facts, tone, headings and section order otherwise unchanged, and add no new claims.${sourceList}${noPadding}
+Fix EVERY problem in the list: structure problems are as important as the word count, so do not skip any. Change only the sections the problems name (and trim wording elsewhere only if the word count must change). Copy every other section exactly as it is, especially the closing sections' tables, lists and FAQ format. Keep the facts, tone, headings and section order, and add no new claims.${sourceList}${noPadding}
+${patternsText(spec.patterns)}
+
 Target length: ${spec.minWords} to ${spec.maxWords} words, excluding the References section. Count carefully.
 Output the COMPLETE corrected article in Markdown and nothing else: no notes, no explanation.
 
