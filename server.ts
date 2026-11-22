@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // llm.ts reads API keys at import time, so load it after dotenv.
-const { availableProviders, defaultModelRef, describeModelError, generate, listModels, resolveModel, PROVIDER_LABELS } =
+const { availableProviders, defaultModelRef, describeModelError, generate, listModels, resolveModel, resolveResearchModel, PROVIDER_LABELS } =
   await import('./server/llm');
 const { runResearch, researchContext, findUnverifiedUrls } = await import('./server/research');
 const { guidelinesContext, runQaReview } = await import('./server/guidelines');
@@ -106,13 +106,18 @@ app.post('/api/sample-docx', requireUser, express.raw({ type: 'application/octet
 
 // Web research: provider web search for cited facts, plus reference articles for house style
 app.post('/api/research', requireUser, async (req, res) => {
-  const { topic, audience, tone, referenceUrls, approvedSources, minSources, model } = req.body;
+  const { topic, audience, tone, referenceUrls, approvedSources, minSources } = req.body;
   if (!topic || typeof topic !== 'string') {
     res.status(400).json({ error: 'Missing topic parameter.' });
     return;
   }
-  const info = await modelOrError(res, model, '/api/research');
-  if (!info) return;
+  let info: ModelInfo;
+  try {
+    info = await resolveResearchModel();
+  } catch (err) {
+    sendModelError(res, '/api/research', err);
+    return;
+  }
 
   try {
     const result = await runResearch(

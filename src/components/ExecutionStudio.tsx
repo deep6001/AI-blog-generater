@@ -923,7 +923,7 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   const activity: RunActivity | null = isResearching
     ? {
         label: 'Researching the web',
-        detail: `Finding sources for "${inputTopic.trim()}" with ${modelName(projectModel) || 'the AI model'}. This usually takes 30 to 90 seconds.`,
+        detail: `Finding sources for "${inputTopic.trim()}". This usually takes 20 to 60 seconds.`,
         startedAt: researchStatus.startedAt,
         completed: completedCount,
         total: activeSteps.length,

@@ -151,7 +151,21 @@ export class ModelConfigError extends Error {}
 
 /** The model comes only from the server's .env (OPENAI_MODEL or DEFAULT_MODEL); any model the client sends is ignored. */
 export async function resolveModel(_ref?: unknown): Promise<ModelInfo> {
-  const value = await defaultModelRef();
+  return modelInfo(await defaultModelRef());
+}
+
+/**
+ * Model for web research (searches, approved-site checks, PubMed selection). Search result text is
+ * billed as input tokens, so a cheaper model here cuts most of the research cost. Set RESEARCH_MODEL
+ * ("openai:gpt-5-mini" or just "gpt-5-mini"); without it research uses the main model.
+ */
+export async function resolveResearchModel(): Promise<ModelInfo> {
+  const raw = process.env.RESEARCH_MODEL?.trim();
+  if (!raw) return resolveModel();
+  return modelInfo(raw.includes(':') ? raw : `openai:${raw}`);
+}
+
+function modelInfo(value: string | null): ModelInfo {
   if (!value) throw new ModelConfigError('No AI provider is configured. Add OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY to .env.');
   const [provider, ...rest] = value.split(':');
   const model = rest.join(':');
