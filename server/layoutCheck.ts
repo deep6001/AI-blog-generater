@@ -206,7 +206,7 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
     const faq = l.match(/^\[(\d+) FAQ items/);
     if (faq) faqCount = Number(faq[1]);
     if (!inClosing) continue;
-    const counted = l.match(/^\[Table: \d+ columns? \([^)]*\), (\d+) rows|^\[Bulleted list, (\d+) items/);
+    const counted = l.match(/^\[Table: \d+ columns? \([^)]*\), (\d+) rows|^\[(?:Bulleted|Numbered) list, (\d+) items/);
     if (counted) inClosing.count = Number(counted[1] || counted[2]);
     const paras = Number(l.match(/^\[(\d+) paragraphs?/)?.[1] || 0);
     inClosing.kinds.push(
@@ -433,7 +433,7 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
       part
         .trim()
         .split(/\s+/)
-        .slice(1)
+        .slice(1, -1) // the first and last words are always capitalised
         .map((w) => w.replace(/[?,.!]/g, ''))
         .some((w) => SMALL.test(w) && /^[A-Z][a-z]*$/.test(w))
     )
@@ -467,6 +467,10 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
     }
     if (exp.heading === 'Final Thoughts' && !/^Final Thoughts:\s*\S.*\?$/.test(sec.heading)) {
       issues.push(`Title the Final Thoughts section "Final Thoughts: <the reader's question>?", like the sample.`);
+    }
+    if (exp.count && exp.heading === 'References') {
+      const n = sec.blocks.filter((b) => b.kind === 'numbered').reduce((t, b) => t + (b.items || 0), 0);
+      if (n > exp.count) issues.push(`Use ${exp.count} references, as in the sample (found ${n}). Keep the ${exp.count} that support the article best.`);
     }
     if (exp.count && (exp.heading === 'Myth vs Fact' || exp.heading === 'Key Takeaways')) {
       const n =
@@ -529,7 +533,7 @@ const STOPWORDS = new Set(
   )
 );
 const contentWords = (s: string) =>
-  new Set((s.toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length > 2 && !STOPWORDS.has(w)).map((w) => w.replace(/s$/, '')));
+  new Set((s.toLowerCase().match(/[a-z]+/g) ?? ([] as string[])).filter((w) => w.length > 2 && !STOPWORDS.has(w)).map((w) => w.replace(/s$/, '')));
 
 /**
  * Content quality checks on the body (before the closing sections): the same point repeated in

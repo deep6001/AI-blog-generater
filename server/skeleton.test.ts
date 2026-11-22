@@ -91,27 +91,61 @@ test('an article assembled from a filled blueprint matches the sample layout wit
   assert.deepEqual(structural, []);
 });
 
-test('validateFilled reports a reply that changed the shape', () => {
+test('validateFilled reports a missing section by its number', () => {
   const bp = blueprintFromOutline(outline)!;
   const filled = fill(template(bp));
-  filled.sections.pop();
-  assert.match(validateFilled(bp, filled).join('\n'), /exactly 6 items/);
-  const moved = fill(template(bp));
-  moved.sections[2].slots[2] = { label: 'Safety Note' };
-  assert.match(validateFilled(bp, moved).join('\n'), /must be \{"label": "UK Guidance Note"\}/);
+  delete filled.sections['6'];
+  assert.match(validateFilled(bp, filled).join('\n'), /section 6 is missing/);
 });
 
-test('buildFromBlueprint retries once with the problems, then gives up cleanly', async () => {
+test('a moved paragraph or changed callout label is repacked into the sample slots', () => {
   const bp = blueprintFromOutline(outline)!;
-  const good = JSON.stringify(fill(template(bp)));
+  const filled = fill(template(bp));
+  // Section 3 should be: para, para, UK Guidance Note, para. The model put the label last and renamed it.
+  const s3 = filled.sections['3'];
+  s3.slots = [s3.slots[0], s3.slots[1], s3.slots[3], { label: 'Safety Note' }];
+  assert.deepEqual(validateFilled(bp, filled), []);
+  assert.deepEqual(filled.sections['3'].slots[2], { label: 'UK Guidance Note' });
+  const md = assemble(bp, filled);
+  assert.match(md, /^\*\*UK Guidance Note\*\*$/m);
+  assert.doesNotMatch(md, /Safety Note/);
+});
+
+test('buildFromBlueprint asks again only for the parts that are still missing', async () => {
+  const bp = blueprintFromOutline(outline)!;
+  const full = fill(template(bp));
+  const firstReply = JSON.parse(JSON.stringify(full));
+  delete firstReply.sections['4'];
   const prompts: string[] = [];
-  const ok = await buildFromBlueprint(bp, 'PROMPT', async (p) => {
-    prompts.push(p);
-    return prompts.length === 1 ? '{"title": "x"}' : `\`\`\`json\n${good}\n\`\`\``;
-  });
+  const ok = await buildFromBlueprint(
+    bp,
+    (only, written) => `PROMPT only=${JSON.stringify(only || null)} written=${(written || []).map((w) => w.number).join(',')}`,
+    async (p) => {
+      prompts.push(p);
+      return prompts.length === 1 ? JSON.stringify(firstReply) : JSON.stringify({ sections: { '4': full.sections['4'] } });
+    }
+  );
   assert.equal(ok.attempts, 2);
   assert.ok(ok.article);
-  assert.match(prompts[1], /DID NOT FIT THE TEMPLATE/);
-  const bad = await buildFromBlueprint(bp, 'PROMPT', async () => 'not json');
+  assert.match(prompts[1], /only=\{"sections":\[4\],"parts":\[\]\}/);
+  assert.match(prompts[1], /written=1,2,3,5,6/);
+});
+
+test('buildFromBlueprint gives up cleanly after three tries', async () => {
+  const bp = blueprintFromOutline(outline)!;
+  let calls = 0;
+  const bad = await buildFromBlueprint(bp, () => 'PROMPT', async () => {
+    calls++;
+    return 'not json';
+  });
   assert.equal(bad.article, null);
+  assert.equal(calls, 3);
+});
+
+test('titleCase lowers short joining words except the first and last word of each part', async () => {
+  const { titleCase } = await import('./skeleton');
+  assert.equal(titleCase('Removal And Replacement Options At A Glance'), 'Removal and Replacement Options at a Glance');
+  assert.equal(titleCase('Could One Segment Be Removed While Another Stays In?'), 'Could One Segment Be Removed While Another Stays In?');
+  assert.equal(titleCase('Final Thoughts: A Better Choice for You?'), 'Final Thoughts: A Better Choice for You?');
+  assert.equal(titleCase('the Role Of NICE'), 'The Role of NICE');
 });

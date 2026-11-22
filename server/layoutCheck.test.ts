@@ -291,7 +291,7 @@ test('a sample with plain lead-ins, 1-paragraph callouts and closing counts is r
   assert.match(patternsText(spec.patterns), /term in plain text, NOT bold/);
   assert.deepEqual(
     spec.closing.filter((c) => c.count).map((c) => [c.heading, c.count]),
-    [['Myth vs Fact', 10], ['Key Takeaways', 10]]
+    [['Myth vs Fact', 10], ['Key Takeaways', 10], ['References', 2]]
   );
 });
 

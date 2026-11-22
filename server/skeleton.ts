@@ -100,10 +100,14 @@ export function blueprintWords(bp: Blueprint): number {
 }
 
 // The JSON template the model fills: same shape as the article, with a placeholder in every slot.
+// Sections are keyed "1", "2", ... so a missing or misplaced one is identified instead of shifting
+// every section after it.
+type SlotValue = string | { label: string } | { table: { header: string[]; rows: string[][] } } | { list: { term: string; text: string }[] };
+type FilledSection = { heading: string; slots: SlotValue[] };
 type Filled = {
-  title: string;
-  intro: string[];
-  sections: { heading: string; slots: (string | { label: string } | { table: { header: string[]; rows: string[][] } } | { list: { term: string; text: string }[] })[] }[];
+  title?: string;
+  intro?: string[];
+  sections: Record<string, FilledSection>;
   myth_vs_fact?: { myth: string; fact: string }[];
   key_takeaways?: string[];
   faqs?: { question: string; answer: string }[];
@@ -111,9 +115,18 @@ type Filled = {
   references?: string[];
 };
 
-export function template(bp: Blueprint, scale = 1): Filled {
+/** Parts of the blueprint to (re)fill: section numbers (1-based) and top-level parts by key. */
+export interface FillScope {
+  sections: number[];
+  parts: string[];
+}
+
+const TOP_PARTS = ['title', 'intro', 'myth_vs_fact', 'key_takeaways', 'faqs', 'final_thoughts', 'references'];
+
+export function template(bp: Blueprint, scale = 1, only?: FillScope): Filled {
   const w = (n: number) => Math.max(15, Math.round((n * scale) / 5) * 5);
-  const slot = (s: Slot): Filled['sections'][number]['slots'][number] =>
+  const want = (part: string) => !only || only.parts.includes(part);
+  const slot = (s: Slot): SlotValue =>
     s.kind === 'para'
       ? `<paragraph, about ${w(s.words)} words>`
       : s.kind === 'callout'
@@ -126,32 +139,36 @@ export function template(bp: Blueprint, scale = 1): Filled {
               },
             }
           : { list: Array.from({ length: s.items }, () => ({ term: '<short term, 1 to 4 words>', text: '<one sentence>' })) };
-  const t: Filled = {
-    title: '<the reader question this article answers, Title Case, ending with ?>',
-    intro: bp.intro.filter((s) => s.kind === 'para').map(slot) as string[],
-    sections: bp.body.map((b) => ({
+  const t: Filled = { sections: {} };
+  if (want('title')) t.title = '<the reader question this article answers, Title Case, ending with ?>';
+  if (want('intro')) t.intro = bp.intro.filter((s) => s.kind === 'para').map(slot) as string[];
+  bp.body.forEach((b, i) => {
+    if (only && !only.sections.includes(i + 1)) return;
+    t.sections[String(i + 1)] = {
       heading: b.slots.some((s) => s.kind === 'table')
         ? `<short descriptive title, not a question, in the style of: "${b.heading}">`
         : `<reader question in Title Case, in the style of: "${b.heading}">`,
       slots: b.slots.map(slot),
-    })),
-  };
+    };
+  });
   for (const c of bp.closing) {
-    if (c.kind === 'myth') t.myth_vs_fact = Array.from({ length: c.rows }, () => ({ myth: '<common belief>', fact: '<evidence-based correction>' }));
-    if (c.kind === 'takeaways') t.key_takeaways = Array.from({ length: c.items }, () => '<one-sentence takeaway>');
-    if (c.kind === 'faq')
+    if (c.kind === 'myth' && want('myth_vs_fact'))
+      t.myth_vs_fact = Array.from({ length: c.rows }, () => ({ myth: '<common belief>', fact: '<evidence-based correction>' }));
+    if (c.kind === 'takeaways' && want('key_takeaways')) t.key_takeaways = Array.from({ length: c.items }, () => '<one-sentence takeaway>');
+    if (c.kind === 'faq' && want('faqs'))
       t.faqs = Array.from({ length: c.count }, () => ({ question: '<reader question?>', answer: `<answer, about ${w(c.words)} words>` }));
-    if (c.kind === 'final')
+    if (c.kind === 'final' && want('final_thoughts'))
       t.final_thoughts = {
         question: '<the reader question for "Final Thoughts: ...?">',
         paragraphs: Array.from({ length: c.paras }, () => `<paragraph, about ${w(c.words)} words>`),
       };
-    if (c.kind === 'references') t.references = Array.from({ length: c.count }, () => '<one reference, copied exactly from a "Cite as" line>');
+    if (c.kind === 'references' && want('references'))
+      t.references = Array.from({ length: c.count }, () => '<one reference, copied exactly from a "Cite as" line>');
   }
   return t;
 }
 
-export function fillPrompt(opts: {
+export interface FillOptions {
   bp: Blueprint;
   draft: string;
   minWords: number;
@@ -160,16 +177,25 @@ export function fillPrompt(opts: {
   rules?: string;
   internalLinks?: string;
   sources?: { title: string; url: string; citation?: string }[];
-}): string {
+}
+
+export function fillPrompt(opts: FillOptions, only?: FillScope, written?: { number: number; heading: string }[]): string {
   const { bp } = opts;
   const target = Math.round(Math.min(opts.maxWords * 0.97, Math.max(opts.minWords * 1.03, opts.sampleWords || (opts.minWords + opts.maxWords) / 2)));
   const scale = target / Math.max(1, blueprintWords(bp));
   const listStyles = bp.body.flatMap((b) => b.slots).filter((s) => s.kind === 'list') as Extract<Slot, { kind: 'list' }>[];
   const cite = (opts.sources || []).filter((s) => s.citation || s.url);
+  const partial = only
+    ? `\nYOU ARE FILLING ONLY PART OF THE ARTICLE. The template below holds just the parts still needed.${
+        written?.length
+          ? ` These sections are already written; do not repeat their points:\n${written.map((x) => `  ${x.number}. ${x.heading}`).join('\n')}`
+          : ''
+      }\nReply with JSON containing only the keys in this template, with the same section numbers.\n`
+    : '';
   return `You are laying out a finished medical blog article onto the client's approved template.
 
-Below is a JSON template. It has exactly the sections, paragraphs, callouts, table, list and closing parts of the client's sample article, in the sample's order. Replace every <placeholder> with real content about the article's topic, taken from the DRAFT ARTICLE further down. Keep the JSON shape exactly:
-- Same number of sections, in the same order, with the same number of items in every array. Do not add, remove, merge or reorder anything.
+Below is a JSON template. It has exactly the sections, paragraphs, callouts, table, list and closing parts of the client's sample article. "sections" is keyed by section number, in the sample's order. Replace every <placeholder> with real content about the article's topic, taken from the DRAFT ARTICLE further down. Keep the JSON shape exactly:
+- Keep every section number, and the same number of items in every "slots" array and every other array. Do not add, remove, merge or move anything between sections.
 - Keep every {"label": "..."} object unchanged: it is a callout label. The paragraphs after it are that callout's content and must fit its name (an Evidence Note or Research Insight describes a study with its year, size and figures; a UK Guidance Note gives UK guidance; a Clinical Note gives practical clinical advice).
 - Choose the topic of each section so the questions read in a natural order (basic questions first) and each section's content suits its shape: put the comparison in the table section and the several-item content (risks, options, side effects) in the list section.
 - Paragraph lengths are given in words; follow them closely. The whole article must be between ${opts.minWords} and ${opts.maxWords} words (aim for about ${target}), excluding references.
@@ -181,11 +207,11 @@ ${cite.length ? `- references: choose from these and copy the "Cite as" text exa
       ? `- Put this internal link inside a natural sentence in the last Final Thoughts paragraph, as a Markdown link [anchor](url):\n${opts.internalLinks.trim()}\n`
       : ''
   }- Plain text inside strings: no Markdown headings or bullets. You may use **bold** sparingly and Markdown links.
-${opts.rules ? `\nCLIENT WRITING RULES (for wording and tone; the template decides the layout):\n${opts.rules.trim()}\n` : ''}
+${opts.rules ? `\nCLIENT WRITING RULES (for wording and tone; the template decides the layout):\n${opts.rules.trim()}\n` : ''}${partial}
 Reply with ONLY the completed JSON, no code fences or comments.
 
 TEMPLATE:
-${JSON.stringify(template(bp, scale), null, 2)}
+${JSON.stringify(template(bp, scale, only), null, 2)}
 
 DRAFT ARTICLE:
 ${opts.draft}`;
@@ -193,44 +219,102 @@ ${opts.draft}`;
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const isPlaceholder = (s: string) => /^<[^>]*>$/.test(s);
+const realText = (v: unknown) => !!str(v) && !isPlaceholder(str(v));
 
-/** Checks the filled JSON against the blueprint. Returns problems, or an empty list when it fits. */
-export function validateFilled(bp: Blueprint, f: any): string[] {
-  const out: string[] = [];
-  if (!f || typeof f !== 'object') return ['The reply was not a JSON object.'];
-  if (!str(f.title) || isPlaceholder(str(f.title))) out.push('title is missing.');
+const describeSlots = (slots: Slot[]) => slots.map((s) => (s.kind === 'callout' ? s.label : s.kind === 'para' ? 'paragraph' : s.kind)).join(', ');
+
+/**
+ * Puts a section's content back into the sample's slots. The model sometimes moves a paragraph to the
+ * other side of a callout or drops the label object; as long as the section holds enough paragraphs
+ * (and its table or list), the layout is rebuilt from the blueprint. Returns null when content is missing.
+ */
+export function repackSection(slots: Slot[], sec: unknown): FilledSection | null {
+  const s = sec as any;
+  if (!s || !realText(s.heading) || !Array.isArray(s.slots)) return null;
+  const paras: string[] = s.slots.filter((v: unknown) => realText(v)).map(str);
+  const table = s.slots.find((v: any) => Array.isArray(v?.table?.header));
+  const list = s.slots.find((v: any) => Array.isArray(v?.list));
+  const needParas = slots.filter((x) => x.kind === 'para').length;
+  const needTable = slots.find((x) => x.kind === 'table') as Extract<Slot, { kind: 'table' }> | undefined;
+  const needList = slots.find((x) => x.kind === 'list') as Extract<Slot, { kind: 'list' }> | undefined;
+  if (paras.length < needParas) return null;
+  if (needTable && (!table || table.table.header.length !== needTable.cols || !Array.isArray(table.table.rows) || !table.table.rows.length)) return null;
+  if (needList && (!list || list.list.length < Math.max(3, needList.items - 2))) return null;
+  // Extra paragraphs join the last one, so nothing written is lost.
+  const used = paras.slice(0, needParas);
+  if (paras.length > needParas && needParas) used[needParas - 1] = [used[needParas - 1], ...paras.slice(needParas)].join(' ');
+  let p = 0;
+  return {
+    heading: str(s.heading),
+    slots: slots.map((x) => (x.kind === 'para' ? used[p++] : x.kind === 'callout' ? { label: x.label } : x.kind === 'table' ? table : list)),
+  };
+}
+
+/** Repairs what it can in place and reports which sections and parts still need filling. */
+export function checkFilled(bp: Blueprint, f: any): FillScope & { problems: string[] } {
+  if (!f || typeof f !== 'object') {
+    return { sections: bp.body.map((_, i) => i + 1), parts: [...TOP_PARTS], problems: ['The reply was not a JSON object.'] };
+  }
+  const result: FillScope & { problems: string[] } = { sections: [], parts: [], problems: [] };
+  const bad = (part: string, problem: string) => {
+    result.parts.push(part);
+    result.problems.push(problem);
+  };
+  // An array of sections is accepted too.
+  if (Array.isArray(f.sections)) f.sections = Object.fromEntries(f.sections.map((s: unknown, i: number) => [String(i + 1), s]));
+  if (!f.sections || typeof f.sections !== 'object') f.sections = {};
+
+  if (!realText(f.title)) bad('title', 'title is missing.');
   const introParas = bp.intro.filter((s) => s.kind === 'para').length;
-  if (!Array.isArray(f.intro) || f.intro.length !== introParas) out.push(`intro must have ${introParas} paragraphs.`);
-  if (!Array.isArray(f.sections) || f.sections.length !== bp.body.length) {
-    out.push(`sections must have exactly ${bp.body.length} items (found ${Array.isArray(f.sections) ? f.sections.length : 0}).`);
-    return out;
-  }
+  if (!Array.isArray(f.intro) || f.intro.filter(realText).length < introParas) bad('intro', `intro must have ${introParas} paragraphs.`);
+  else f.intro = f.intro.filter(realText).slice(0, introParas);
+
   bp.body.forEach((b, i) => {
-    const sec = f.sections[i];
-    if (!str(sec?.heading) || isPlaceholder(str(sec?.heading))) out.push(`sections[${i}].heading is missing.`);
-    if (!Array.isArray(sec?.slots) || sec.slots.length !== b.slots.length) {
-      out.push(`sections[${i}].slots must have exactly ${b.slots.length} items.`);
-      return;
+    const key = String(i + 1);
+    const fixed = repackSection(b.slots, f.sections[key]);
+    if (fixed) f.sections[key] = fixed;
+    else {
+      result.sections.push(i + 1);
+      result.problems.push(`section ${key} is missing or lacks its ${describeSlots(b.slots)}.`);
     }
-    b.slots.forEach((s, j) => {
-      const v = sec.slots[j];
-      const at = `sections[${i}].slots[${j}]`;
-      if (s.kind === 'para' && (!str(v) || isPlaceholder(str(v)))) out.push(`${at} must be a paragraph string.`);
-      if (s.kind === 'callout' && v?.label !== s.label) out.push(`${at} must be {"label": "${s.label}"}.`);
-      if (s.kind === 'table' && (!Array.isArray(v?.table?.header) || v.table.header.length !== s.cols || !Array.isArray(v.table.rows) || !v.table.rows.length))
-        out.push(`${at} must be a table with ${s.cols} columns.`);
-      if (s.kind === 'list' && (!Array.isArray(v?.list) || v.list.length < Math.max(3, s.items - 2))) out.push(`${at} must be a list of about ${s.items} items.`);
-    });
   });
+
   for (const c of bp.closing) {
-    if (c.kind === 'myth' && (!Array.isArray(f.myth_vs_fact) || Math.abs(f.myth_vs_fact.length - c.rows) > 1)) out.push(`myth_vs_fact must have ${c.rows} rows.`);
-    if (c.kind === 'takeaways' && (!Array.isArray(f.key_takeaways) || Math.abs(f.key_takeaways.length - c.items) > 1)) out.push(`key_takeaways must have ${c.items} items.`);
-    if (c.kind === 'faq' && (!Array.isArray(f.faqs) || f.faqs.length !== c.count)) out.push(`faqs must have ${c.count} items.`);
-    if (c.kind === 'final' && (!Array.isArray(f.final_thoughts?.paragraphs) || f.final_thoughts.paragraphs.length !== c.paras))
-      out.push(`final_thoughts.paragraphs must have ${c.paras} items.`);
-    if (c.kind === 'references' && (!Array.isArray(f.references) || !f.references.length)) out.push('references are missing.');
+    if (c.kind === 'myth' && (!Array.isArray(f.myth_vs_fact) || Math.abs(f.myth_vs_fact.length - c.rows) > 1)) bad('myth_vs_fact', `myth_vs_fact must have ${c.rows} rows.`);
+    if (c.kind === 'takeaways' && (!Array.isArray(f.key_takeaways) || Math.abs(f.key_takeaways.length - c.items) > 1))
+      bad('key_takeaways', `key_takeaways must have ${c.items} items.`);
+    if (c.kind === 'faq' && (!Array.isArray(f.faqs) || f.faqs.length !== c.count)) bad('faqs', `faqs must have ${c.count} items.`);
+    if (c.kind === 'final' && (!Array.isArray(f.final_thoughts?.paragraphs) || f.final_thoughts.paragraphs.filter(realText).length !== c.paras))
+      bad('final_thoughts', `final_thoughts.paragraphs must have ${c.paras} items.`);
+    if (c.kind === 'references' && (!Array.isArray(f.references) || !f.references.filter(realText).length)) bad('references', 'references are missing.');
   }
-  return out;
+  return result;
+}
+
+/** Checks the filled JSON against the blueprint (after repairs). Returns problems, or an empty list when it fits. */
+export function validateFilled(bp: Blueprint, f: any): string[] {
+  return checkFilled(bp, f).problems;
+}
+
+const SMALL_WORDS = /^(a|an|and|as|at|but|by|for|in|nor|of|on|or|the|to|vs)$/i;
+
+/** Title Case as in the samples: short joining words in lower case, except first and last in each part. */
+export function titleCase(heading: string): string {
+  return heading
+    .split(/(:\s*)/)
+    .map((part) => {
+      if (/^:\s*$/.test(part)) return part;
+      const words = part.split(/(\s+)/);
+      const idx = words.map((w, i) => (/\S/.test(w) ? i : -1)).filter((i) => i >= 0);
+      return words
+        .map((w, i) => {
+          if (i === idx[0] || i === idx[idx.length - 1]) return w.replace(/^[a-z]/, (c) => c.toUpperCase());
+          const bare = w.replace(/[?,.!]+$/, '');
+          return SMALL_WORDS.test(bare) && /^[A-Z][a-z]*$/.test(bare) ? w.toLowerCase() : w;
+        })
+        .join('');
+    })
+    .join('');
 }
 
 const cell = (s: unknown) => str(s).replace(/\|/g, '/').replace(/\n+/g, ' ');
@@ -242,11 +326,11 @@ const question = (s: string) => {
 
 /** Writes the filled template out as Markdown in the format the checker and the DOCX export expect. */
 export function assemble(bp: Blueprint, f: Filled): string {
-  const out: string[] = [`# ${str(f.title)}`, ...f.intro.map(str)];
+  const out: string[] = [`# ${titleCase(str(f.title))}`, ...(f.intro || []).map(str)];
   const listStyle = (s: Slot) => (s.kind === 'list' ? s.style : 'none');
   bp.body.forEach((b, i) => {
-    const sec = f.sections[i];
-    out.push(`## ${str(sec.heading)}`);
+    const sec = f.sections[String(i + 1)];
+    out.push(`## ${titleCase(str(sec.heading))}`);
     b.slots.forEach((s, j) => {
       const v: any = sec.slots[j];
       if (s.kind === 'para') out.push(str(v));
@@ -277,9 +361,11 @@ export function assemble(bp: Blueprint, f: Filled): string {
     if (c.kind === 'faq' && f.faqs) {
       out.push('## Frequently Asked Questions', ...f.faqs.map((q, i) => `**${i + 1}. ${question(q.question)}**\n${str(q.answer)}`));
     }
-    if (c.kind === 'final' && f.final_thoughts) out.push(`## Final Thoughts: ${question(f.final_thoughts.question)}`, ...f.final_thoughts.paragraphs.map(str));
+    if (c.kind === 'final' && f.final_thoughts) {
+      out.push(`## Final Thoughts: ${titleCase(question(f.final_thoughts.question))}`, ...f.final_thoughts.paragraphs.filter(realText).map(str));
+    }
     if (c.kind === 'references' && f.references) {
-      out.push(`## ${c.heading}`, f.references.map((r, i) => `${i + 1}. ${str(r).replace(/^\d+[.)]\s*/, '')}`).join('\n'));
+      out.push(`## ${c.heading}`, f.references.filter(realText).slice(0, c.count).map((r, i) => `${i + 1}. ${str(r).replace(/^\d+[.)]\s*/, '')}`).join('\n'));
     }
   }
   return `${out.join('\n\n')}\n`;
@@ -298,23 +384,36 @@ function parseJson(text: string): unknown {
 }
 
 /**
- * Fills the blueprint from the draft and assembles the article. Retries once with the problems found.
- * Returns null when the model can't produce a valid fill, so the caller can fall back to the draft.
+ * Fills the blueprint from the draft and assembles the article. Small slips are repaired in place;
+ * sections or parts still missing are asked for again on their own (up to two more rounds), keeping
+ * everything that was already right. Returns the problems when it still can't fit, so the caller can
+ * fall back to the draft.
  */
 export async function buildFromBlueprint(
   bp: Blueprint,
-  prompt: string,
+  promptFor: (only?: FillScope, written?: { number: number; heading: string }[]) => string,
   complete: (prompt: string) => Promise<string>
 ): Promise<{ article: string; attempts: number } | { article: null; attempts: number; problems: string[] }> {
-  let problems: string[] = [];
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const p =
-      attempt === 1
-        ? prompt
-        : `${prompt}\n\nYOUR PREVIOUS REPLY DID NOT FIT THE TEMPLATE:\n${problems.map((x) => `- ${x}`).join('\n')}\nReply again with the complete JSON that fits exactly.`;
-    const filled = parseJson(await complete(p));
-    problems = validateFilled(bp, filled);
-    if (!problems.length) return { article: assemble(bp, filled as Filled), attempts: attempt };
+  const first = parseJson(await complete(promptFor()));
+  const filled: any = first && typeof first === 'object' ? first : { sections: {} };
+  let state = checkFilled(bp, filled);
+  let attempts = 1;
+  while ((state.sections.length || state.parts.length) && attempts < 3) {
+    attempts++;
+    const missing = new Set(state.sections);
+    const written = bp.body
+      .map((_, i) => ({ number: i + 1, heading: str(filled.sections?.[String(i + 1)]?.heading) }))
+      .filter((x) => x.heading && !missing.has(x.number));
+    const more: any = parseJson(await complete(promptFor({ sections: state.sections, parts: state.parts }, written)));
+    if (more && typeof more === 'object') {
+      const moreSections = Array.isArray(more.sections)
+        ? Object.fromEntries(more.sections.map((s: unknown, i: number) => [String(state.sections[i]), s]))
+        : more.sections || {};
+      for (const n of state.sections) if (moreSections[String(n)]) filled.sections[String(n)] = moreSections[String(n)];
+      for (const part of state.parts) if (more[part] !== undefined) filled[part] = more[part];
+    }
+    state = checkFilled(bp, filled);
   }
-  return { article: null, attempts: 2, problems };
+  if (state.sections.length || state.parts.length) return { article: null, attempts, problems: state.problems };
+  return { article: assemble(bp, filled as Filled), attempts };
 }

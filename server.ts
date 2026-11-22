@@ -253,18 +253,19 @@ app.post('/api/finalize', requireUser, async (req, res) => {
     let builtFromSample = false;
     const bp = blueprintFromOutline(profile?.sampleOutline);
     if (bp) {
+      const fill = {
+        bp,
+        draft: article,
+        minWords,
+        maxWords,
+        sampleWords: profile?.sampleWordCount,
+        rules: profile?.writingRules,
+        internalLinks: profile?.internalLinks,
+        sources: validSources,
+      };
       const built = await buildFromBlueprint(
         bp,
-        fillPrompt({
-          bp,
-          draft: article,
-          minWords,
-          maxWords,
-          sampleWords: profile?.sampleWordCount,
-          rules: profile?.writingRules,
-          internalLinks: profile?.internalLinks,
-          sources: validSources,
-        }),
+        (only, written) => fillPrompt(fill, only, written),
         (prompt) => complete(prompt, 0.2)
       );
       if (!('problems' in built)) {
