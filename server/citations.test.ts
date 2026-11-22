@@ -11,16 +11,34 @@ test('ncbiId reads PubMed ids and PMC numbers from URLs', () => {
 
 test('harvard formats one, two and many authors, and organisations without authors', () => {
   const url = 'https://pubmed.ncbi.nlm.nih.gov/26659940/';
-  const meta = { authors: ['McKnight, B.', 'Tobin, R.', 'Kabir, Y.'], year: '2015', title: 'Improving Upper Arm Skin Laxity Using a Tripollar Radiofrequency Device.', journal: 'Journal of drugs in dermatology : JDD' };
+  const meta = {
+    authors: ['McKnight, B.', 'Tobin, R.', 'Kabir, Y.'],
+    year: '2015',
+    title: 'Improving Upper Arm Skin Laxity Using a Tripollar Radiofrequency Device.',
+    journal: 'Journal of drugs in dermatology : JDD',
+    volume: '14',
+    issue: '12',
+    pages: '1463-6',
+  };
+  // Same shape as the clients' samples: curly quotes, volume(issue), pp. full page range with an en dash.
   assert.equal(
     harvard(meta, 'x', url),
-    "McKnight, B. et al. (2015) 'Improving Upper Arm Skin Laxity Using a Tripollar Radiofrequency Device', Journal of Drugs in Dermatology. Available at: https://pubmed.ncbi.nlm.nih.gov/26659940/"
+    'McKnight, B. et al. (2015) ‘Improving Upper Arm Skin Laxity Using a Tripollar Radiofrequency Device’, Journal of Drugs in Dermatology, 14(12), pp. 1463–1466. Available at: https://pubmed.ncbi.nlm.nih.gov/26659940/'
   );
   assert.match(harvard({ ...meta, authors: ['A, B.', 'C, D.'] }, 'x', url), /^A, B\. and C, D\. \(2015\)/);
+  assert.match(harvard({ ...meta, journal: 'The Lancet. Oncology', volume: undefined, pages: undefined }, 'x', url), /’, The Lancet Oncology\. Available/);
+  // Web pages without a journal: no quotes, as in "NHS England (2026) Title. Available at: ..."
   assert.equal(
-    harvard(undefined, 'Acne - NHS', 'https://www.nhs.uk/conditions/acne/'),
-    "NHS (no date) 'Acne - NHS'. Available at: https://www.nhs.uk/conditions/acne/"
+    harvard(undefined, 'Acne', 'https://www.nhs.uk/conditions/acne/'),
+    'NHS (no date) Acne. Available at: https://www.nhs.uk/conditions/acne/'
   );
+});
+
+test('pageRange writes abbreviated ranges in full with an en dash', async () => {
+  const { pageRange } = await import('./citations');
+  assert.equal(pageRange('1463-6'), '1463–1466');
+  assert.equal(pageRange('152-160'), '152–160');
+  assert.equal(pageRange('e123'), 'e123');
 });
 
 test('metaFromHtml reads citation meta tags', () => {
@@ -34,6 +52,9 @@ test('metaFromHtml reads citation meta tags', () => {
     title: 'Arm contouring after weight loss',
     year: '2025',
     journal: 'Plastic and Reconstructive Surgery - Global Open',
+    volume: undefined,
+    issue: undefined,
+    pages: undefined,
   });
 });
 
@@ -65,4 +86,11 @@ Arm circumference measurements alone cannot prove loose upper arm skin has tight
 
   const fine = md.replace('A small study looked', 'A 2017 study of 34 people, 7 treated on the arms, looked');
   assert.doesNotMatch(contentIssues(fine).join('\n'), /Evidence Note/);
+});
+
+test("journal names keep apostrophes lower case", () => {
+  assert.match(
+    harvard({ authors: ['Sadick, N.'], year: '2019', title: 'Treatment for cellulite', journal: "International journal of women's dermatology" }, 'x', 'https://pmc.ncbi.nlm.nih.gov/articles/PMC6374708/'),
+    /International Journal of Women's Dermatology\./
+  );
 });

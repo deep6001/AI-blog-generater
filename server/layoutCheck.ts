@@ -9,7 +9,7 @@ export type BlockKind = 'para' | 'table' | 'bullets' | 'numbered' | 'faq' | 'cal
 
 export interface Section {
   heading: string;
-  blocks: { kind: BlockKind; label?: string; leadIn?: boolean; cols?: number; items?: number }[];
+  blocks: { kind: BlockKind; label?: string; leadIn?: boolean; cols?: number; rows?: number; items?: number }[];
 }
 
 export interface LayoutSpec {
@@ -17,10 +17,12 @@ export interface LayoutSpec {
   maxWords: number;
   callouts: string[];
   /** Closing sections in order, with the only block kinds each may contain. */
-  closing: { heading: string; kinds: BlockKind[] }[];
+  closing: { heading: string; kinds: BlockKind[]; /** Table rows or list items in the sample. */ count?: number }[];
   faqCount: number;
   /** Paragraphs that follow each callout label in the sample. */
   calloutParas: number;
+  /** Typical words per body paragraph in the sample (median); 0 when unknown. */
+  typicalParaWords?: number;
   /** The sample's exact intro and body section patterns. */
   patterns: SamplePatterns;
   /** Exact References heading text used by the sample, e.g. "References:". */
@@ -83,7 +85,8 @@ export function parseSections(markdown: string): Section[] {
     const sec = sections[sections.length - 1];
     const first = group[0].trim();
     if (first.startsWith('|')) {
-      return sec.blocks.push({ kind: 'table', cols: first.replace(/^\||\|$/g, '').split('|').length });
+      const rows = group.filter((l) => l.trim().startsWith('|') && !/^\s*\|?\s*:?-{3,}/.test(l)).length - 1;
+      return sec.blocks.push({ kind: 'table', cols: first.replace(/^\||\|$/g, '').split('|').length, rows });
     }
     const items = group.filter((l) => /^\s*([-*+]|\d+[.)])\s/.test(l));
     if (/^[-*+]\s/.test(first)) {
@@ -152,6 +155,14 @@ const mostCommon = (values: number[], fallback: number) => {
   return [...freq.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? fallback;
 };
 
+/** Median words per body paragraph in the sample outline, from lines like "[2 paragraphs, ~45 words each]". */
+export function typicalParaWords(outline: string | null | undefined): number {
+  if (!outline) return 0;
+  const body = outline.split(/\n## (?:Myth vs Fact|Key Takeaways|Frequently Asked Questions|Final Thoughts|References)/i)[0];
+  const values = [...body.matchAll(/^\[\d+ paragraphs?, ~(\d+) words/gm)].map((m) => Number(m[1])).sort((a, b) => a - b);
+  return values.length ? values[Math.floor(values.length / 2)] : 0;
+}
+
 export function specFromOutline(outline: string | null | undefined, base: SpecBase): LayoutSpec {
   const defaults: LayoutSpec = {
     ...base,
@@ -195,6 +206,8 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
     const faq = l.match(/^\[(\d+) FAQ items/);
     if (faq) faqCount = Number(faq[1]);
     if (!inClosing) continue;
+    const counted = l.match(/^\[Table: \d+ columns? \([^)]*\), (\d+) rows|^\[Bulleted list, (\d+) items/);
+    if (counted) inClosing.count = Number(counted[1] || counted[2]);
     const paras = Number(l.match(/^\[(\d+) paragraphs?/)?.[1] || 0);
     inClosing.kinds.push(
       ...(l.startsWith('[Table')
@@ -216,6 +229,7 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
     faqCount,
     calloutParas: mostCommon(calloutRuns, defaults.calloutParas),
     patterns: patternsFromOutline(outline),
+    typicalParaWords: typicalParaWords(outline),
     referencesHeading,
   };
 }
@@ -295,6 +309,23 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
     );
   }
 
+  // Only the client's callout labels may be used; invented ones ("Safety Note") don't count.
+  const allowed = new Set(spec.callouts.map((c) => c.toLowerCase()));
+  const invented = [
+    ...new Set(
+      sections
+        .filter((s) => s.heading && !closingKey(s.heading))
+        .flatMap((s) => s.blocks.filter((b) => b.kind === 'callout' && b.label && !allowed.has(b.label.toLowerCase())).map((b) => b.label!))
+    ),
+  ];
+  if (invented.length) {
+    issues.push(
+      `Use only the client's callout labels (${spec.callouts.map((c) => `**${c}**`).join(', ')}), each once. Replace or remove: ${invented
+        .map((l) => `**${l}**`)
+        .join(', ')}.`
+    );
+  }
+
   // Every body section must match one of the sample's section patterns exactly.
   const { intro, body: patterns } = spec.patterns;
   const has = (blocks: PatternBlock[], b: PatternBlock) => blocks.includes(b);
@@ -315,6 +346,11 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
       }
       if (match.tableCols && got.tableCols && got.tableCols !== match.tableCols) {
         details.push(`the table in "${s.heading}" has ${got.tableCols} columns; the sample's has ${match.tableCols}`);
+      }
+      if (has(match.blocks, 'list') && !match.leadIn && got.leadIn) {
+        details.push(
+          `the list items in "${s.heading}" must not start with bold text; write them as the sample does${match.plainLeadIn ? ' ("- Term: explanation." in plain text)' : ''}`
+        );
       }
       if (match.leadIn && !got.leadIn) {
         details.push(`every bullet in "${s.heading}" must start with a bold lead-in ("- **Lead-in:** explanation.")`);
@@ -377,6 +413,17 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
     if (exp.heading === 'Final Thoughts' && !/^Final Thoughts:\s*\S.*\?$/.test(sec.heading)) {
       issues.push(`Title the Final Thoughts section "Final Thoughts: <the reader's question>?", like the sample.`);
     }
+    if (exp.count && (exp.heading === 'Myth vs Fact' || exp.heading === 'Key Takeaways')) {
+      const n =
+        exp.heading === 'Myth vs Fact'
+          ? sec.blocks.find((b) => b.kind === 'table')?.rows ?? 0
+          : sec.blocks.filter((b) => b.kind === 'bullets').reduce((t, b) => t + (b.items || 0), 0);
+      if (Math.abs(n - exp.count) > 1) {
+        issues.push(
+          `Give "${exp.heading}" ${exp.count} ${exp.heading === 'Myth vs Fact' ? 'myth and fact rows' : 'bullet points'}, as in the sample (found ${n}).`
+        );
+      }
+    }
     if (exp.heading === 'Frequently Asked Questions') {
       const n = sec.blocks.filter((b) => b.kind === 'faq').length;
       if (n !== spec.faqCount) {
@@ -417,7 +464,7 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
     }
   }
 
-  issues.push(...contentIssues(markdown));
+  issues.push(...contentIssues(markdown, spec.typicalParaWords));
   return { wordCount, issues };
 }
 
@@ -434,7 +481,7 @@ const contentWords = (s: string) =>
  * different sections, too many "Ask your practitioner" sentences instead of answers, and Evidence
  * or Research callouts that describe studies without any figures.
  */
-export function contentIssues(markdown: string): string[] {
+export function contentIssues(markdown: string, typicalParaWords = 0): string[] {
   const issues: string[] = [];
   const body = markdown.replace(/\r\n/g, '\n').split(/\n(?=##\s+(Myth vs Fact|Key Takeaways|Frequently Asked Questions|Final Thoughts|References))/i)[0];
   const sections = body.split(/\n(?=##\s)/).map((s) => ({
@@ -492,6 +539,34 @@ export function contentIssues(markdown: string): string[] {
     issues.push(
       `The ${vague.join(' and ')} callout${vague.length > 1 ? 's' : ''} must describe the study with figures from the research: year, number of participants, protocol and main result (e.g. "a 2017 study of 34 people, 7 treated on the arms, four weekly sessions").`
     );
+  }
+
+  // Paragraphs much shorter than the sample's make sections read thin.
+  if (typicalParaWords) {
+    const min = Math.round(typicalParaWords * 0.6);
+    const thin = sections
+      .filter((s) => s.heading !== 'Introduction')
+      .map((s) => {
+        // Each run of paragraphs (before and after a callout label) is judged on its own.
+        const runs = s.text.split(/^\*\*[^*\n]+\*\*:?[ \t]*$/m).map((run) =>
+          run
+            .split(/\n\s*\n/)
+            .map((p) => p.trim())
+            .filter((p) => p && !/^[-*]\s/.test(p))
+        );
+        const avgs = runs
+          .filter((r) => r.length)
+          .map((r) => r.reduce((n, p) => n + (p.match(/\S+/g) || []).length, 0) / r.length);
+        return { heading: s.heading, avg: Math.round(avgs.length ? Math.min(...avgs) : 0) };
+      })
+      .filter((x) => x.avg > 0 && x.avg < min);
+    if (thin.length) {
+      issues.push(
+        `Paragraphs in the sample run about ${typicalParaWords} words. These sections are too thin; expand each paragraph to roughly ${typicalParaWords} words with useful facts from the research (not filler or repetition), then trim elsewhere if the word count goes over: ${thin
+          .map((t) => `"${t.heading}" (~${t.avg} words per paragraph)`)
+          .join('; ')}.`
+      );
+    }
   }
   return issues;
 }

@@ -38,9 +38,9 @@ ${words(body)}
 ${words(body)}
 
 **Clinical Note**
-${words(15)}
+${words(28)}
 
-${words(15)}
+${words(28)}
 
 ## Second Question?
 
@@ -53,10 +53,18 @@ ${words(body)}
 | Myth | Fact |
 | --- | --- |
 | a | b |
+| c | d |
+| e | f |
+| g | h |
+| i | j |
+| k | l |
 
 ## Key Takeaways
 
 - one
+- three
+- four
+- five
 - two
 
 ## Frequently Asked Questions
@@ -167,8 +175,8 @@ test('two callouts in one section, or a short callout, break the callout pattern
   const { dedupeReferences } = await import('./layoutCheck');
   const spec = specFromOutline(outline, base);
   assert.equal(spec.referencesHeading, 'References:');
-  const twoParaNote = `**Clinical Note**\n${words(15)}\n\n${words(15)}\n`;
-  const crowded = good().replace(twoParaNote, `**Clinical Note**\n${words(15)}\n\n**Evidence Note**\n${words(15)}\n`);
+  const twoParaNote = `**Clinical Note**\n${words(28)}\n\n${words(28)}\n`;
+  const crowded = good().replace(twoParaNote, `**Clinical Note**\n${words(28)}\n\n**Evidence Note**\n${words(28)}\n`);
   const issues = checkLayout(crowded, { ...spec, callouts: ['Clinical Note', 'Evidence Note'] }).issues.join('\n');
   assert.match(
     issues,
@@ -184,8 +192,8 @@ const shapedOutline = outline.replace(
 );
 const table2 = '| A | B |\n| --- | --- |\n| x | y |\n';
 const list4 = '- **Redness:** common.\n- **Stinging:** brief.\n- **Dryness:** mild.\n- **Peeling:** rare.\n';
-const listSection = (intro: string, list = list4) => `## What Side Effects Can It Cause?\n\n${intro}${list}\n${words(15)}\n\n`;
-const shaped = (tableSec = `## How the Options Compare\n\n${table2}\n`, listSec = listSection(`${words(20)}\n\n`)) =>
+const listSection = (intro: string, list = list4) => `## What Side Effects Can It Cause?\n\n${intro}${list}\n${words(30)}\n\n`;
+const shaped = (tableSec = `## How the Options Compare\n\n${table2}\n`, listSec = listSection(`${words(30)}\n\n`)) =>
   good().replace('## Myth vs Fact', `${tableSec}${listSec}## Myth vs Fact`);
 
 test('an article with every sample pattern in place passes', () => {
@@ -233,3 +241,76 @@ test('a missing list or table section is named, and an extra one is flagged', ()
   const twoTables = shaped(`## How the Options Compare\n\n${table2}\n## Another Comparison\n\n${table2}\n`);
   assert.match(checkLayout(twoTables, spec).issues.join('\n'), /exactly 1 body table section; this article has 2/);
 });
+
+test('sections whose paragraphs are much shorter than the sample are flagged as thin', async () => {
+  const { typicalParaWords } = await import('./layoutCheck');
+  assert.equal(typicalParaWords(outline), 40);
+  const thin = good().replace(`## Second Question?\n\n${words(30)}\n\n${words(30)}`, `## Second Question?\n\n${words(12)}\n\n${words(12)}`);
+  assert.match(
+    checkLayout(thin, specFromOutline(outline, base)).issues.join('\n'),
+    /too thin[\s\S]*"Second Question\?" \(~12 words per paragraph\)/
+  );
+});
+
+// Shaped like "sample 2": a plain "Term: explanation" list followed by a callout, 1 paragraph after
+// some callouts, a 3-column table, 10 Myth vs Fact rows and 10 Key Takeaways.
+const sample2 = `# Sample Title?
+[2 paragraphs, ~45 words each]
+## First Question?
+[2 paragraphs, ~40 words each]
+**UK Guidance Note** [bold label on its own line]
+[1 paragraph, ~40 words]
+## At a Glance
+[Table: 3 columns (A | B | C), 4 rows, bold header row]
+## Can It Interact With Other Medicines?
+[1 paragraph, ~40 words]
+[Bulleted list, 4 items. e.g. "Warfarin or acenocoumarol: it can reduce their effect."]
+[1 paragraph, ~40 words]
+**Evidence Note** [bold label on its own line]
+[1 paragraph, ~40 words]
+## Second Question?
+[2 paragraphs, ~40 words each]
+## Myth vs Fact
+[Table: 2 columns (Myth | Fact), 10 rows, bold header row]
+## Key Takeaways
+[Bulleted list, 10 items. e.g. "x"]
+## Frequently Asked Questions
+[2 FAQ items: bold numbered question, line break, answer of ~30 words]
+## Final Thoughts: Is It Right for You?
+[2 paragraphs, ~60 words each, contains an internal link]
+## References:
+[Numbered list, 2 items. e.g. "x"]`;
+
+test('a sample with plain lead-ins, 1-paragraph callouts and closing counts is read exactly', async () => {
+  const { patternsText } = await import('./samplePatterns');
+  const spec = specFromOutline(sample2, base);
+  const list = spec.patterns.body.find((p) => p.blocks.includes('list'))!;
+  assert.deepEqual(list.blocks, ['para', 'list', 'para', 'callout', 'para']);
+  assert.equal(list.leadIn, false);
+  assert.equal(list.plainLeadIn, true);
+  assert.match(patternsText(spec.patterns), /term in plain text, NOT bold/);
+  assert.deepEqual(
+    spec.closing.filter((c) => c.count).map((c) => [c.heading, c.count]),
+    [['Myth vs Fact', 10], ['Key Takeaways', 10]]
+  );
+});
+
+test('bold lead-ins, wrong table columns and short closing lists are flagged against a plain-list sample', () => {
+  const spec = specFromOutline(sample2, base);
+  const p = (n = 30) => words(n);
+  const md = `# Title?\n\n${p()}\n\n${p()}\n\n## First Question?\n\n${p()}\n\n${p()}\n\n**UK Guidance Note**\n${p()}\n\n## At a Glance\n\n| A | B |\n| --- | --- |\n| x | y |\n\n## Can It Interact With Other Medicines?\n\n${p()}\n\n- **Warfarin:** reduced effect.\n- **Dabigatran:** reduced effect.\n- **Statins:** lower levels.\n- **Omeprazole:** lower levels.\n\n${p()}\n\n**Evidence Note**\nIn a 2018 trial of 1,207 men, ${p(25)}\n\n## Second Question?\n\n${p()}\n\n${p()}\n\n## Myth vs Fact\n\n| Myth | Fact |\n| --- | --- |\n| a | b |\n| c | d |\n\n## Key Takeaways\n\n- one\n- two\n\n## Frequently Asked Questions\n\n**1. Q?**\n${p(10)}\n\n**2. Q2?**\n${p(10)}\n\n## Final Thoughts: Is It Right for You?\n\n${p()}\n\n${p()} [link](https://clinic.example/acne)\n\n## References:\n\n1. A (2020) B. Available at: https://a.example/1\n2. C (2021) D. Available at: https://b.example/2\n`;
+  const issues = checkLayout(md, spec).issues.join('\n');
+  assert.match(issues, /must not start with bold text[\s\S]*"- Term: explanation\." in plain text/);
+  assert.match(issues, /has 2 columns; the sample's has 3/);
+  assert.match(issues, /Give "Myth vs Fact" 10 myth and fact rows, as in the sample \(found 2\)/);
+  assert.match(issues, /Give "Key Takeaways" 10 bullet points, as in the sample \(found 2\)/);
+});
+
+test('patterns name the callout the sample uses, and invented callout labels are flagged', async () => {
+  const { patternsText } = await import('./samplePatterns');
+  const spec = specFromOutline(sample2, base);
+  assert.match(patternsText(spec.patterns), /then 1 paragraph\. \(use in exactly 1 section; the sample uses \*\*Evidence Note\*\* here/);
+  const md = good().replace('**Clinical Note**', '**Safety Note**');
+  assert.match(checkLayout(md, specFromOutline(outline, base)).issues.join('\n'), /Use only the client's callout labels \(\*\*Clinical Note\*\*\)[\s\S]*\*\*Safety Note\*\*/);
+});
+

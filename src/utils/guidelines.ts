@@ -52,12 +52,12 @@ export const DEFAULT_DOCUMENT_FORMAT = `DOCUMENT FORMAT (match the client's appr
 - Start with one "# " title in Title Case, ideally the reader's question. Then 2 short introduction paragraphs with no heading.
 - No meta description, byline, reading time, horizontal rules, emojis or disclaimer unless the brief asks for them.
 - Main sections use "## " headings in Title Case, phrased as the reader's question, e.g. "## Why Do You Still Need ADT If Abiraterone Lowers Androgens?". Usually 2 paragraphs per section. Do not number headings.
-- Special blocks: put the label alone in bold on its own line, exactly one of **Clinical Note**, **UK Guidance Note**, **Evidence Note** or **Research Insight**, followed by exactly 2 normal paragraphs. Use all four, each in a different body section that it supports. Never use blockquotes (>) for them.
-- Tables: each body table gets its OWN "## " heading, a short descriptive title rather than a question (e.g. "How ADT, Abiraterone and Prednisolone Work Together"), and that section contains ONLY the table: no paragraph before or after it. Plain Markdown, usually 2 columns, with a header row.
-- Include one list section where several items are listed (for example side effects, options or warning signs), shaped exactly as: one short introductory paragraph, then a bulleted list where every item starts with a bold lead-in ("- **Low potassium:** explanation."), then one short closing paragraph.
+- Special blocks: put the label alone in bold on its own line, exactly one of **Clinical Note**, **UK Guidance Note**, **Evidence Note** or **Research Insight**, followed by normal paragraphs; how many paragraphs come before and after each label follows the sample article's section patterns (2 before and 2 after if there is no sample). Use all four, each in a different body section that it supports. Never use blockquotes (>) for them.
+- Tables: each body table gets its OWN "## " heading, a short descriptive title rather than a question (e.g. "How ADT, Abiraterone and Prednisolone Work Together"), and that section contains ONLY the table: no paragraph before or after it. Plain Markdown with a header row and the same number of columns as the sample article's table (usually 2 if there is no sample).
+- Include one list section where several items are listed (for example side effects, options or warning signs), shaped exactly like the sample article's list section: the same paragraphs before and after the list and the same item style (bold or plain lead-ins). With no sample: one short introductory paragraph, then a bulleted list where every item starts with a bold lead-in ("- **Low potassium:** explanation."), then one short closing paragraph.
 - Close with these sections, in this order, with these exact headings:
   ## Myth vs Fact
-  A table with columns | Myth | Fact | and 6 to 8 rows.
+  A table with columns | Myth | Fact | and the same number of rows as the sample article (6 to 8 if there is no sample).
   ## Key Takeaways
   5 to 8 short bullets.
   ## Frequently Asked Questions
@@ -67,7 +67,7 @@ export const DEFAULT_DOCUMENT_FORMAT = `DOCUMENT FORMAT (match the client's appr
   ## Final Thoughts: <the reader's question, in Title Case>
   2 paragraphs; the second contains the call to action with the internal link inside a natural sentence.
   ## References:
-  A numbered list: 1. Author, A. et al. (Year) 'Article title', Journal. Available at: https://direct-link`;
+  A numbered list: 1. Author, A. et al. (Year) ‘Article title’, Journal, Volume(Issue), pp. first–last. Available at: https://direct-link (when research gives a "Cite as" line, copy it exactly)`;
 
 export const DEFAULT_REFERENCE_RULES = `- Every reference must exist, be accessible and directly support the claim it is attached to. Never invent references or guess missing details.
 - Five real, relevant references are enough. Do not pad the list.

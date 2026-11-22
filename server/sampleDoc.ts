@@ -199,5 +199,6 @@ Headings shown are examples of style only. Write about the new topic, and never 
 ${outline}
 
 ${patternsText(patternsFromOutline(outline))}
-Do not invent other section layouts: no callout straight after a heading, no extra paragraph before or after a list or table.`;
+Do not invent other section layouts: no callout straight after a heading, no extra paragraph before or after a list or table.
+The sample has the final say on layout. Where the writing or reference rules describe the layout differently (paragraphs before or after a callout, table columns, whether list items are bold, the number of Myth vs Fact rows or Key Takeaways, the reference format), follow this sample.`;
 }

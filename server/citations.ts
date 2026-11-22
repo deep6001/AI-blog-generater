@@ -2,11 +2,17 @@
 // correct Harvard reference instead of guessing journals and years from a page title.
 // PubMed and PMC come from NCBI's free E-utilities; other sites from their citation_* meta tags.
 
+import { ncbiGet } from './ncbi';
+
 export interface CitationMeta {
   authors: string[]; // "Surname, I.I."
   year?: string;
   title?: string;
   journal?: string;
+  volume?: string;
+  issue?: string;
+  /** "1463-6" or "152-160"; written out as a full range. */
+  pages?: string;
   /** Organisation for pages without named authors, e.g. "NHS". */
   organisation?: string;
 }
@@ -68,6 +74,9 @@ export function metaFromHtml(html: string): CitationMeta | null {
     title: cleanTitle(title),
     year: yearOf(values('citation_publication_date')[0] || values('citation_date')[0] || values('citation_online_date')[0]),
     journal: values('citation_journal_title')[0],
+    volume: values('citation_volume')[0],
+    issue: values('citation_issue')[0],
+    pages: [values('citation_firstpage')[0], values('citation_lastpage')[0]].filter(Boolean).join('-') || undefined,
   };
 }
 
@@ -87,8 +96,8 @@ export async function ncbiMeta(urls: string[], signal?: AbortSignal): Promise<Ma
     if (!wanted.length) continue;
     try {
       const ids = [...new Set(wanted.map((w) => w.ref!.id))].join(',');
-      const res = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=${db}&id=${ids}&retmode=json`, { signal });
-      if (!res.ok) continue;
+      const res = await ncbiGet('esummary.fcgi', { db, id: ids, retmode: 'json' }, signal);
+      if (!res) continue;
       const result = (await res.json())?.result || {};
       for (const w of wanted) {
         const r = result[w.ref!.id];
@@ -98,6 +107,9 @@ export async function ncbiMeta(urls: string[], signal?: AbortSignal): Promise<Ma
           year: yearOf(r.pubdate) || yearOf(r.epubdate),
           title: cleanTitle(r.title),
           journal: r.fulljournalname || r.source,
+          volume: r.volume || undefined,
+          issue: r.issue || undefined,
+          pages: r.pages || undefined,
         });
       }
     } catch {
@@ -108,17 +120,36 @@ export async function ncbiMeta(urls: string[], signal?: AbortSignal): Promise<Ma
 }
 
 const titleCaseJournal = (j: string) =>
-  /[a-z]/.test(j) && j === j.toLowerCase() ? j : j.replace(/\b([a-z])([a-z]*)\b/g, (w, a, b) => (/^(of|and|the|in|for|on|de|la)$/.test(w) ? w : a.toUpperCase() + b));
+  j
+    .replace(/(?<![\w'’])([a-z])([a-z]*)\b/g, (w, a, b) => (/^(of|and|the|in|for|on|de|la)$/.test(w) ? w : a.toUpperCase() + b))
+    .replace(/^./, (c) => c.toUpperCase());
 
-/** Harvard reference: Surname, A. et al. (Year) 'Title', Journal. Available at: URL */
+/** "1463-6" -> "1463–1466", "152-160" -> "152–160" (en dash, as in the samples). */
+export function pageRange(pages: string): string {
+  const m = pages.trim().match(/^(\w*?)(\d+)\s*[-–]\s*(\d+)$/);
+  if (!m) return pages.trim();
+  const [, prefix, start, end] = m;
+  const full = end.length < start.length ? start.slice(0, start.length - end.length) + end : end;
+  return `${prefix}${start}–${prefix}${full}`;
+}
+
+/**
+ * Harvard reference in the clients' sample style:
+ * articles  Surname, A. et al. (Year) ‘Title’, Journal, 16(2), pp. 152–160. Available at: URL
+ * web pages Organisation (Year) Title. Available at: URL
+ */
 export function harvard(meta: CitationMeta | undefined, fallbackTitle: string, url: string): string {
   const org = meta?.organisation || ORGS[Object.keys(ORGS).find((d) => host(url) === d || host(url).endsWith(`.${d}`)) || ''];
   const a = meta?.authors || [];
   const who = a.length === 0 ? org || '' : a.length === 1 ? a[0] : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a[0]} et al.`;
   const year = meta?.year || 'no date';
   const title = cleanTitle(meta?.title) || cleanTitle(fallbackTitle) || url;
-  const journal = meta?.journal ? `, ${titleCaseJournal(meta.journal.replace(/\s*:.*$/, ''))}` : '';
-  return `${who ? `${who} ` : ''}(${year}) '${title}'${journal}. Available at: ${url}`;
+  const lead = `${who ? `${who} ` : ''}(${year})`;
+  if (!meta?.journal) return `${lead} ${title}. Available at: ${url}`;
+  const journal = titleCaseJournal(meta.journal.replace(/\s*:.*$/, '').replace(/\.\s+/g, ' ').trim());
+  const volume = meta.volume ? `, ${meta.volume}${meta.issue ? `(${meta.issue})` : ''}` : '';
+  const pages = meta.pages ? `, pp. ${pageRange(meta.pages)}` : '';
+  return `${lead} ‘${title}’, ${journal}${volume}${pages}. Available at: ${url}`;
 }
 
 /** Adds a ready-to-copy Harvard citation to each source. Page meta can be passed in when already fetched. */

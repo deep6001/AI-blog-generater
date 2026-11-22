@@ -4,8 +4,7 @@
 // keeps only the studies that are really about the topic, noting their figures.
 
 import { addUsage, generate, type ModelInfo, type Usage } from './llm';
-
-const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
+import { ncbiGet } from './ncbi';
 
 export interface PubmedStudy {
   pmid: string;
@@ -37,8 +36,8 @@ function parseJson<T>(text: string): T | null {
 }
 
 export async function searchPubmed(term: string, max: number, signal?: AbortSignal): Promise<string[]> {
-  const res = await fetch(`${EUTILS}/esearch.fcgi?db=pubmed&retmode=json&sort=relevance&retmax=${max}&term=${encodeURIComponent(term)}`, { signal });
-  if (!res.ok) return [];
+  const res = await ncbiGet('esearch.fcgi', { db: 'pubmed', retmode: 'json', sort: 'relevance', retmax: String(max), term }, signal);
+  if (!res) return [];
   return (await res.json())?.esearchresult?.idlist || [];
 }
 
@@ -48,8 +47,8 @@ export async function fetchAbstracts(
   signal?: AbortSignal
 ): Promise<{ pmid: string; title: string; year: string; abstract: string }[]> {
   if (!pmids.length) return [];
-  const res = await fetch(`${EUTILS}/efetch.fcgi?db=pubmed&retmode=xml&id=${pmids.join(',')}`, { signal });
-  if (!res.ok) return [];
+  const res = await ncbiGet('efetch.fcgi', { db: 'pubmed', retmode: 'xml', id: pmids.join(',') }, signal);
+  if (!res) return [];
   const xml = await res.text();
   return [...xml.matchAll(/<PubmedArticle>([\s\S]*?)<\/PubmedArticle>/g)].map(([, a]) => ({
     pmid: a.match(/<PMID[^>]*>(\d+)<\/PMID>/)?.[1] || '',
