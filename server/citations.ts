@@ -145,7 +145,7 @@ export function harvard(meta: CitationMeta | undefined, fallbackTitle: string, u
   const year = meta?.year || 'no date';
   const title = cleanTitle(meta?.title) || cleanTitle(fallbackTitle) || url;
   const lead = `${who ? `${who} ` : ''}(${year})`;
-  if (!meta?.journal) return `${lead} ${title}. Available at: ${url}`;
+  if (!meta?.journal) return `${lead} ${title}${/[.?!]$/.test(title) ? '' : '.'} Available at: ${url}`;
   const journal = titleCaseJournal(meta.journal.replace(/\s*:.*$/, '').replace(/\.\s+/g, ' ').trim());
   const volume = meta.volume ? `, ${meta.volume}${meta.issue ? `(${meta.issue})` : ''}` : '';
   const pages = meta.pages ? `, pp. ${pageRange(meta.pages)}` : '';
@@ -162,5 +162,55 @@ export async function withCitations<T extends { title: string; url: string }>(
     sources.map((s) => s.url),
     signal
   );
-  return sources.map((s) => ({ ...s, citation: harvard(ncbi.get(s.url) ?? pageMeta.get(s.url) ?? undefined, s.title, s.url) }));
+  return Promise.all(
+    sources.map(async (s) => {
+      const meta = ncbi.get(s.url) ?? pageMeta.get(s.url) ?? undefined;
+      // Search results often give a PDF's first line as its title ("Treatment options:").
+      const title = !meta?.title && brokenTitle(s.title) ? (await pdfTitle(s.url, signal)) || titleFromFileName(s.url) || s.title : s.title;
+      return { ...s, citation: harvard(meta, title, s.url) };
+    })
+  );
+}
+
+const isPdf = (url: string) => /\.pdf($|[?#])/i.test(url);
+
+/** A title that was cut off mid-phrase or is just a label. */
+export function brokenTitle(title?: string): boolean {
+  const t = (title || '').trim();
+  return !t || t.split(/\s+/).length < 2 || /[:;,(\-–]$/.test(t) || /\b(to|of|and|the|for|a|an|in|with|on|or|by)\.?$/i.test(t);
+}
+
+/** "Intracorneal-Rings-0354.pdf" -> "Intracorneal Rings" */
+export function titleFromFileName(url: string): string {
+  // ".../1095-having-a-ring-to-treat-x/file": use the last descriptive segment, not "file".
+  const segments = decodeURIComponent(url.split(/[?#]/)[0])
+    .split('/')
+    .filter((x) => /[a-z]/i.test(x) && !/^(file|download|view|index(\.\w+)?)$/i.test(x));
+  const descriptive = [...segments].reverse().find((x) => x.replace(/\.pdf$/i, '').split(/[-_]+/).length >= 2) || segments.pop() || '';
+  const name = descriptive
+    .replace(/\.pdf$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b(web|version|final|v\d+|\d{3,})\b/gi, ' ')
+    .replace(/^\s*\d+\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return name ? name.replace(/^./, (c) => c.toUpperCase()) : '';
+}
+
+/** The title stored inside a PDF (Info dictionary or XMP), when it reads like a real title. */
+async function pdfTitle(url: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const res = await fetch(url, { signal, headers: { Range: 'bytes=0-400000', 'User-Agent': 'Mozilla/5.0 (compatible; BlogCraftReferenceCheck/1.0)' } });
+    if (!res.ok || !(isPdf(url) || /pdf/i.test(res.headers.get('content-type') || ''))) return null;
+    const text = new TextDecoder('latin1').decode(new Uint8Array(await res.arrayBuffer()).slice(0, 400000));
+    const found = [
+      text.match(/<dc:title>[\s\S]*?<rdf:li[^>]*>([\s\S]*?)<\/rdf:li>/)?.[1],
+      text.match(/\/Title\s*\(([^)]{3,200})\)/)?.[1],
+    ]
+      .map((t) => t?.replace(/\s+/g, ' ').trim())
+      .find((t) => t && /\s/.test(t) && !/^[A-Z0-9_]+$/.test(t) && !/^(untitled|microsoft word|document\d*)/i.test(t));
+    return found || null;
+  } catch {
+    return null;
+  }
 }

@@ -228,7 +228,7 @@ ${sourceList}${style}
 ## Evidence rules
 - Base factual claims, statistics, study findings and guidance on the source pack above.${referenceRules}
 - When you describe a study (especially in an Evidence Note or Research Insight), give its year, size and main figures from the pack, e.g. "a 2017 study of 34 people, 7 treated on the arms". Never write only "a small study".
-- Say each point once. Do not repeat the same study, caveat or warning in several sections. Give the reader the answer instead of only telling them to ask a practitioner.
+- Say each point once. Do not repeat the same study, caveat or warning in several sections. Lead with what the evidence shows; state each limitation once, where it matters most. Give the reader the answer instead of only telling them to ask a practitioner.
 - If a point needs evidence the pack does not contain, write it without a specific figure or citation.
 - Do not show the [n] markers in reader-facing prose unless the article format calls for numbered citations.`;
 }

@@ -201,6 +201,8 @@ Below is a JSON template. It has exactly the sections, paragraphs, callouts, tab
 - Paragraph lengths are given in words; follow them closely. The whole article must be between ${opts.minWords} and ${opts.maxWords} words (aim for about ${target}), excluding references.
 - Headings: Title Case like the sample, with short joining words (a, an, and, at, for, in, of, on, or, the, to) in lower case. Section headings are reader questions except the table section's, which is a short descriptive title.
 ${listStyles.some((s) => s.style === 'bold') ? '- List items: "term" is the bold lead-in, "text" the explanation.\n' : ''}${listStyles.some((s) => s.style !== 'bold') ? '- List items: "term" is a plain lead-in written before a colon, "text" the explanation.\n' : ''}- Say each point once across the whole article; do not repeat a study, caveat or warning in several places.
+- Answer each section's question directly with what IS known first (study findings with figures, what happens in practice, who it suits). Mention a limit of the evidence briefly and only where it matters; do not end every section with what is not known.
+- Cover the concrete situations readers ask about in the draft's research (for example complications, over- or under-correction, what happens next), not only general statements.
 - Use only facts from the draft and its sources. Do not invent studies, figures or references.
 ${cite.length ? `- references: choose from these and copy the "Cite as" text exactly:\n${cite.map((s) => `  - ${s.citation || `${s.title}. Available at: ${s.url}`}`).join('\n')}\n` : '- references: copy them from the draft exactly.\n'}${
     opts.internalLinks?.trim()

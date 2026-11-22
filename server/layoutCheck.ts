@@ -591,6 +591,26 @@ export function contentIssues(markdown: string, typicalParaWords = 0): string[] 
     );
   }
 
+  // Over-hedging: repeating what is not known instead of telling the reader what is.
+  const HEDGE =
+    /\b(does not establish|do not establish|did not establish|not established|cannot (?:be )?guarantee[d]?|cannot be promised|cannot (?:confirm|predict|establish|identify|show|tell)|cannot be predicted|not necessarily|remains? uncertain|evidence is limited|limited evidence|little (?:published )?research|is not (?:yet )?known|no (?:reliable|direct) (?:figures|evidence))\b/gi;
+  const hedges: string[] = body.match(HEDGE) ?? [];
+  const longSentences = all.filter((t) => t.split(/\s+/).length > 4).length;
+  if (hedges.length > Math.max(6, longSentences * 0.05)) {
+    const top = Object.entries(
+      hedges.reduce<Record<string, number>>((m, h) => ((m[h.toLowerCase()] = (m[h.toLowerCase()] || 0) + 1), m), {})
+    )
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([h, n]) => `"${h}" x${n}`);
+    issues.push(
+      `The article says what is not known ${hedges.length} times (${top.join(', ')}). Keep at most ${Math.max(
+        4,
+        Math.floor(longSentences * 0.03)
+      )}: state each limitation once where it matters most, and elsewhere tell the reader what the evidence does show and what happens in practice.`
+    );
+  }
+
   // Evidence and research callouts must describe studies with figures.
   const callouts = [...body.matchAll(/^\*\*([^*\n]*(Evidence|Research)[^*\n]*)\*\*:?\s*\n([\s\S]*?)(?=\n\*\*[^*\n]+\*\*:?\s*\n|\n##\s|$)/gim)];
   const vague = callouts.filter((m) => !/\d/.test(m[3])).map((m) => m[1].trim());

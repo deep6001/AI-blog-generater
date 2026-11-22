@@ -94,3 +94,25 @@ test("journal names keep apostrophes lower case", () => {
     /International Journal of Women's Dermatology\./
   );
 });
+
+test('cut-off PDF titles are detected and replaced from the file name', async () => {
+  const { brokenTitle, titleFromFileName } = await import('./citations');
+  assert.equal(brokenTitle('Treatment options:'), true);
+  assert.equal(brokenTitle('Having an intrastromal corneal ring to'), true);
+  assert.equal(brokenTitle('Keratoconus - information for patients'), false);
+  assert.equal(titleFromFileName('https://www.qvh.nhs.uk/wp-content/uploads/2024/09/Intracorneal-Rings-0354.pdf'), 'Intracorneal Rings');
+  assert.equal(
+    titleFromFileName('https://www.qvh.nhs.uk/x/Virtuak-Keratoconus-Monitoring-Clinic-WEB-VERSION-0736.pdf'),
+    'Virtuak Keratoconus Monitoring Clinic'
+  );
+});
+
+test('contentIssues flags an article that keeps saying what is not known', () => {
+  const hedge = 'Evidence does not establish how often this happens in practice for most people.';
+  const fact = 'A 2023 study of 52 eyes reported clear improvements in vision after the procedure.';
+  const section = (h: string, lines: string[]) => `## ${h}\n\n${lines.join(' ')}\n\n`;
+  const md = `# T\n\n${fact}\n\n${section('One?', [hedge, fact, hedge])}${section('Two?', [hedge, hedge, fact])}${section('Three?', [hedge, hedge, fact])}${section('Four?', [hedge, fact])}## Myth vs Fact\n`;
+  assert.match(contentIssues(md).join('\n'), /says what is not known 7 times \("does not establish" x7\)/);
+  const balanced = md.replace(/Evidence does not establish how often this happens in practice for most people\./g, fact.replace('52', '40'));
+  assert.doesNotMatch(contentIssues(balanced).join('\n'), /what is not known/);
+});

@@ -35,8 +35,8 @@ function parseJson<T>(text: string): T | null {
   }
 }
 
-export async function searchPubmed(term: string, max: number, signal?: AbortSignal): Promise<string[]> {
-  const res = await ncbiGet('esearch.fcgi', { db: 'pubmed', retmode: 'json', sort: 'relevance', retmax: String(max), term }, signal);
+export async function searchPubmed(term: string, max: number, signal?: AbortSignal, sort: 'relevance' | 'pub_date' = 'relevance'): Promise<string[]> {
+  const res = await ncbiGet('esearch.fcgi', { db: 'pubmed', retmode: 'json', sort, retmax: String(max), term }, signal);
   if (!res) return [];
   return (await res.json())?.esearchresult?.idlist || [];
 }
@@ -64,28 +64,37 @@ export async function findPubmedStudies(
   signal?: AbortSignal
 ): Promise<{ studies: PubmedStudy[]; queries: string[]; usage: Usage }> {
   const q = await generate(info, {
-    prompt: `Write 5 PubMed search queries to find original clinical studies for this blog topic: "${topic}".
-Brand and device names rarely appear in abstracts, so describe the technology generically (e.g. a branded device combining radiofrequency and ultrasound becomes "focused radiofrequency ultrasound").
-1. the generic technology + the body area or condition
-2. the generic technology + "skin laxity" or the outcome the topic is about
-3. the generic technology alone
-4. the generic technology + "body contouring" or the closest treatment category
-5. the body area or condition + "non-invasive treatment"
-Never use the brand name on its own. Plain keywords, at most 6 words each, no field tags.
-Reply with only a JSON array of 5 strings.`,
+    prompt: `Write PubMed search queries to find clinical studies for this blog topic: "${topic}".
+
+"exact": 2 queries using the exact term researchers use for the treatment or condition in the topic, aimed at the topic's specific question. For a procedure or condition name (e.g. "CAIRS", "keratoconus", "apalutamide") use that name, e.g. "CAIRS removal", "CAIRS explantation exchange". For a commercial brand that abstracts rarely mention (e.g. "Exilis Ultra 360"), use the generic technology name instead (e.g. "focused radiofrequency ultrasound").
+"generic": 3 broader queries: the technology or treatment class with the body area or condition, with the outcome the topic is about, and the condition with "treatment" or "complications".
+Plain keywords, at most 6 words each, no field tags.
+Reply with only JSON: {"exact": ["...", "..."], "generic": ["...", "...", "..."]}`,
     temperature: 0.2,
     signal,
   });
-  const queries = (parseJson<string[]>(q.text) || []).filter((s) => typeof s === 'string').slice(0, 5);
+  const parsed = parseJson<{ exact?: unknown[]; generic?: unknown[] } | string[]>(q.text);
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : []);
+  const exact = Array.isArray(parsed) ? list(parsed).slice(0, 2) : list(parsed?.exact).slice(0, 2);
+  const generic = Array.isArray(parsed) ? list(parsed).slice(2, 5) : list(parsed?.generic).slice(0, 3);
+  const queries = [...exact, ...generic];
   if (!queries.length) return { studies: [], queries: [], usage: q.usage };
 
-  const ids = [...new Set((await Promise.all(queries.map((t) => searchPubmed(t, 8, signal).catch(() => [])))).flat())].slice(0, 20);
+  // The exact-term searches run twice: most relevant, and newest first, so recent studies on the
+  // topic's own question are not crowded out by older, broader papers.
+  const searches = [
+    ...exact.map((t) => searchPubmed(t, 6, signal, 'pub_date')),
+    ...exact.map((t) => searchPubmed(t, 6, signal)),
+    ...generic.map((t) => searchPubmed(t, 5, signal)),
+  ];
+  const ids = [...new Set((await Promise.all(searches.map((p) => p.catch(() => [] as string[])))).flat())].slice(0, 24);
   const papers = (await fetchAbstracts(ids, signal)).filter((p) => p.pmid && p.title);
   if (!papers.length) return { studies: [], queries, usage: q.usage };
 
   const pick = await generate(info, {
     prompt: `Blog topic: "${topic}"
 Below are PubMed records. Keep only those that are genuinely useful evidence for this topic: studies of the same technology or treatment (or its earlier versions), on the same body area or problem, and reviews or guidance that discuss it directly. Leave out anything about other conditions, unrelated devices or other body areas.
+Studies that address the topic's own question directly (and recent systematic reviews) matter most; keep them ahead of older or indirect evidence. Keep at most 10.
 
 For each one you keep, write a note using ONLY the abstract: year, study type, number of participants (and how many were treated on the relevant area), protocol (sessions and interval), what was measured, the main result with its figures, and any limitation.
 
