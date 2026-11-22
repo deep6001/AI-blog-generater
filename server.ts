@@ -262,6 +262,7 @@ app.post('/api/finalize', requireUser, async (req, res) => {
         rules: profile?.writingRules,
         internalLinks: profile?.internalLinks,
         sources: validSources,
+        voice: spec.voice,
       };
       const built = await buildFromBlueprint(
         bp,

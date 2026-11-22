@@ -1,4 +1,5 @@
 import { isApproved } from './references';
+import { voiceFromOutline, voiceIssue, type Voice } from './voice';
 import { describeBlocks, patternsFromOutline, patternsText, specialsOf, type PatternBlock, type SamplePatterns, type SectionPattern } from './samplePatterns';
 // Checks a finished article against the client's sample template and word range, and builds the
 // instructions for a correction pass. The checks are deterministic so the model can't "agree"
@@ -23,6 +24,8 @@ export interface LayoutSpec {
   calloutParas: number;
   /** Typical words per body paragraph in the sample (median); 0 when unknown. */
   typicalParaWords?: number;
+  /** How much the sample speaks to the reader as "you". */
+  voice?: Voice | null;
   /** The sample's exact intro and body section patterns. */
   patterns: SamplePatterns;
   /** Exact References heading text used by the sample, e.g. "References:". */
@@ -230,6 +233,7 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
     calloutParas: mostCommon(calloutRuns, defaults.calloutParas),
     patterns: patternsFromOutline(outline),
     typicalParaWords: typicalParaWords(outline),
+    voice: voiceFromOutline(outline),
     referencesHeading,
   };
 }
@@ -524,6 +528,8 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
   }
 
   issues.push(...contentIssues(markdown, spec.typicalParaWords));
+  const voice = voiceIssue(markdown, spec.voice ?? null);
+  if (voice) issues.push(voice);
   return { wordCount, issues };
 }
 

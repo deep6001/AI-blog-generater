@@ -1,4 +1,5 @@
 import { patternsFromOutline, patternsText } from './samplePatterns';
+import { measureVoice, voiceFromOutline, voiceLine, voiceRule } from './voice';
 // Reads an approved sample article (.docx) and describes its layout, so new blogs can follow it
 // without copying its wording. Produces a Markdown-like outline plus the document's styling.
 import { unzipSync, strFromU8 } from 'fflate';
@@ -104,6 +105,7 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
 
   const body = documentXml.match(/<w:body>([\s\S]*)<\/w:body>/)?.[1] || '';
   const blocks: Block[] = [];
+  const paraTexts: string[] = [];
   let wordCount = 0;
 
   for (const m of body.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>|<w:p\b[\s\S]*?<\/w:p>/g)) {
@@ -139,6 +141,7 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
       blocks.push({ kind: 'para', words: words(rest.join(' ')), faq: true, link: false });
     } else {
       blocks.push({ kind: 'para', words: words(text), link: /<w:hyperlink\b/.test(el) });
+      if (!blocks.some((b) => b.kind === 'heading' && /^references/i.test(b.text))) paraTexts.push(text);
     }
   }
 
@@ -176,6 +179,9 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
 
   const sect = documentXml.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)?.[0] || '';
   const twipsToMm = (v?: string) => (v ? Math.round((Number(v) / 1440) * 25.4) : undefined);
+  // How much the sample speaks to the reader as "you", so new articles can match it.
+  const voice = measureVoice(paraTexts);
+  if (voice && voice.share > 0) lines.push(voiceLine(voice));
   return {
     outline: lines.join('\n'),
     wordCount,
@@ -200,5 +206,6 @@ ${outline}
 
 ${patternsText(patternsFromOutline(outline))}
 Do not invent other section layouts: no callout straight after a heading, no extra paragraph before or after a list or table.
-The sample has the final say on layout. Where the writing or reference rules describe the layout differently (paragraphs before or after a callout, table columns, whether list items are bold, the number of Myth vs Fact rows or Key Takeaways, the reference format), follow this sample.`;
+${voiceFromOutline(outline) ? `${voiceRule(voiceFromOutline(outline)!)}
+` : ''}The sample has the final say on layout. Where the writing or reference rules describe the layout differently (paragraphs before or after a callout, table columns, whether list items are bold, the number of Myth vs Fact rows or Key Takeaways, the reference format), follow this sample.`;
 }
