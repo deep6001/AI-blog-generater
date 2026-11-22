@@ -23,7 +23,17 @@ export interface SamplePatterns {
   /** Blocks under the title, before the first "## " heading. */
   intro: PatternBlock[] | null;
   body: SectionPattern[];
+  /** Order of the sample's special sections: "table", "list" and callout labels, e.g. ["table", "UK Guidance Note", ...]. */
+  order: string[];
+  /** Number of body sections in the sample. */
+  bodyCount: number;
 }
+
+/** The special parts of a section, in order: "table", "list" and callout labels. */
+export const specialsOf = (blocks: PatternBlock[], labels: string[]): string[] => {
+  let n = 0;
+  return blocks.flatMap((b) => (b === 'table' || b === 'list' ? [b] : b === 'callout' ? [labels[n++] || 'callout'] : []));
+};
 
 const CLOSING = /^(Myth vs Fact|Key Takeaways|Frequently Asked Questions|Final Thoughts|References)/i;
 
@@ -113,7 +123,13 @@ export function patternsFromOutline(outline: string | null | undefined): SampleP
         labels: [...s.labels],
       });
   }
-  return { intro: intro && (intro as PatternBlock[]).length ? intro : null, body };
+  const filled = sections.filter((s) => s.blocks.length);
+  return {
+    intro: intro && (intro as PatternBlock[]).length ? intro : null,
+    body,
+    order: filled.flatMap((s) => specialsOf(s.blocks, s.labels)),
+    bodyCount: filled.length,
+  };
 }
 
 /** "2 paragraphs, then a callout label, then 2 paragraphs" */

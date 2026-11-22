@@ -4,8 +4,6 @@ import {
   Sparkles,
   Mail,
   Lock,
-  User as UserIcon,
-  Building2,
   ArrowRight,
   ShieldCheck,
   CheckCircle2,
@@ -16,14 +14,12 @@ import {
 } from 'lucide-react';
 
 export const AuthScreen: React.FC = () => {
-  const { loginManual, registerManual, sendPasswordReset, error, clearError, loading } = useAuth();
+  const { loginManual, sendPasswordReset, error, clearError, loading } = useAuth();
 
-  const [mode, setMode] = useState<'signin' | 'register' | 'forgot'>('signin');
+  const [mode, setMode] = useState<'signin' | 'forgot'>('signin');
   const [resetSentTo, setResetSentTo] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [workspaceName, setWorkspaceName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -45,16 +41,7 @@ export const AuthScreen: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      if (mode === 'signin') {
-        await loginManual(email, password);
-      } else {
-        await registerManual(
-          email,
-          password,
-          displayName || email.split('@')[0],
-          workspaceName || 'Primary Workspace'
-        );
-      }
+      await loginManual(email, password);
     } catch (err: any) {
       setFormError(err.message || 'Authentication failed.');
     } finally {
@@ -81,7 +68,7 @@ export const AuthScreen: React.FC = () => {
     }
   };
 
-  const switchMode = (next: 'signin' | 'register' | 'forgot') => {
+  const switchMode = (next: 'signin' | 'forgot') => {
     setMode(next);
     setResetSentTo(null);
     setFormError(null);
@@ -166,73 +153,8 @@ export const AuthScreen: React.FC = () => {
             </div>
           ) : (
           <>
-          {/* Mode Switcher Tabs */}
-          <div className="grid grid-cols-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-lg text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => switchMode('signin')}
-              className={`py-2 rounded-md transition-colors ${
-                mode === 'signin'
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode('register')}
-              className={`py-2 rounded-md transition-colors ${
-                mode === 'register'
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              Create account
-            </button>
-          </div>
-
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'register' && (
-              <>
-                {/* Full Name */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Your Name
-                  </label>
-                  <div className="relative">
-                    <UserIcon className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                    <input
-                      type="text"
-                      required
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="e.g. Dr. Arthur Smith"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-md bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-700"
-                    />
-                  </div>
-                </div>
-
-                {/* Initial Workspace / Clinic Name */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
-                    Clinic / Workspace Name (Multi-Tenant)
-                  </label>
-                  <div className="relative">
-                    <Building2 className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                    <input
-                      type="text"
-                      value={workspaceName}
-                      onChange={(e) => setWorkspaceName(e.target.value)}
-                      placeholder="e.g. Harley Street Prostate Clinic"
-                      className="w-full pl-9 pr-3 py-2.5 rounded-md bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-700"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
             {/* Email */}
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
@@ -291,10 +213,13 @@ export const AuthScreen: React.FC = () => {
               disabled={isSubmitting || loading}
               className="w-full mt-2 h-10 px-4 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.98] disabled:opacity-50"
             >
-              <span>{mode === 'signin' ? 'Sign In to Workspace' : 'Create ID & Start Workspace'}</span>
+              <span>Sign In to Workspace</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
+          <p className="text-center text-xs text-slate-500 dark:text-slate-400">
+            Accounts are created by your administrator. Ask them if you need access.
+          </p>
           </>
           )}
         </div>

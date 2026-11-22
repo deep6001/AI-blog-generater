@@ -192,10 +192,20 @@ function usageOf(msg: AIMessage): Usage {
   };
 }
 
+/** Optional listener for every model call's token use, e.g. to log or measure costs. */
+type UsageListener = (call: { kind: 'generate' | 'webSearch' | 'readUrls'; model: string; usage: Usage; searches: number; ms: number; label: string }) => void;
+let usageListener: UsageListener | null = null;
+export function setUsageListener(fn: UsageListener | null) {
+  usageListener = fn;
+}
+const report = (kind: 'generate' | 'webSearch' | 'readUrls', info: ModelInfo, usage: Usage, started: number, prompt: string, searches = 0) =>
+  usageListener?.({ kind, model: info.id, usage, searches, ms: Date.now() - started, label: prompt.replace(/\s+/g, ' ').slice(0, 70) });
+
 export async function generate(
   info: ModelInfo,
   opts: { prompt: string; system?: string; temperature?: number; signal?: AbortSignal }
 ): Promise<{ text: string; usage: Usage }> {
+  const started = Date.now();
   const messages = [...(opts.system ? [new SystemMessage(opts.system)] : []), new HumanMessage(opts.prompt)];
   let msg: AIMessage;
   try {
@@ -205,7 +215,9 @@ export async function generate(
     fixedTemperatureModels.add(info.model);
     msg = (await chatModel(info).invoke(messages, { signal: opts.signal })) as AIMessage;
   }
-  return { text: msg.text, usage: usageOf(msg) };
+  const usage = usageOf(msg);
+  report('generate', info, usage, started, opts.prompt);
+  return { text: msg.text, usage };
 }
 
 // Web search ---------------------------------------------------------------------
@@ -310,10 +322,13 @@ function standardCited(msg: AIMessage, insertMarkers: boolean): Omit<WebResult, 
 export async function webSearch(
   info: ModelInfo,
   prompt: string,
-  opts: { allowedDomains?: string[]; signal?: AbortSignal; insertMarkers?: boolean } = {}
+  opts: { allowedDomains?: string[]; signal?: AbortSignal; insertMarkers?: boolean; maxSearches?: number } = {}
 ): Promise<WebResult> {
   const domains = (opts.allowedDomains || []).filter(Boolean);
+  // Search result text is billed as input tokens and is most of the cost; "low" keeps it short.
+  const contextSize = (['low', 'medium', 'high'] as const).find((v) => v === process.env.SEARCH_CONTEXT_SIZE?.trim()) ?? 'low';
   const insertMarkers = opts.insertMarkers ?? true;
+  const started = Date.now();
 
   if (info.provider === 'google') {
     const res = await google().models.generateContent({
@@ -331,14 +346,17 @@ export async function webSearch(
   const model =
     info.provider === 'openai'
       ? new ChatOpenAI({ model: info.model, apiKey: keys.openai, useResponsesApi: true }).bindTools([
-          { type: 'web_search', ...(domains.length ? { filters: { allowed_domains: domains } } : {}) } as any,
+          { type: 'web_search', search_context_size: contextSize, ...(domains.length ? { filters: { allowed_domains: domains } } : {}) } as any,
         ])
       : new ChatAnthropic({ model: info.model, apiKey: keys.anthropic, maxTokens: MAX_OUTPUT_TOKENS }).bindTools([
-          { type: 'web_search_20250305', name: 'web_search', max_uses: 8, ...(domains.length ? { allowed_domains: domains } : {}) } as any,
+          { type: 'web_search_20250305', name: 'web_search', max_uses: opts.maxSearches ?? 8, ...(domains.length ? { allowed_domains: domains } : {}) } as any,
         ]);
 
   const msg = (await model.invoke([new HumanMessage(prompt)], { signal: opts.signal })) as AIMessage;
-  return { ...standardCited(msg, insertMarkers), usage: usageOf(msg) };
+  const cited = standardCited(msg, insertMarkers);
+  const usage = usageOf(msg);
+  report('webSearch', info, usage, started, prompt, cited.searchQueries.length);
+  return { ...cited, usage };
 }
 
 /** Reads specific pages (reference articles). */

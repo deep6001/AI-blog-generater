@@ -19,6 +19,8 @@ export interface UserProfile {
   photoURL?: string;
   currentTenantId: string;
   createdAt: string;
+  /** Can manage users from the Admin page. */
+  isSuperAdmin: boolean;
 }
 
 /** The subset of the signed-in user the UI relies on. */
@@ -41,7 +43,6 @@ interface AuthContextType {
   sendPasswordReset: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
   loginManual: (email: string, pass: string) => Promise<void>;
-  registerManual: (email: string, pass: string, name: string, workspaceName?: string) => Promise<void>;
   createTenant: (workspaceName: string) => Promise<Tenant>;
   switchTenant: (tenantId: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -106,6 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       photoURL: profile.avatar_url || undefined,
       currentTenantId: active?.id || '',
       createdAt: profile.created_at,
+      isSuperAdmin: Boolean(profile.is_super_admin),
     });
     setTenants(list);
     setCurrentTenant(active);
@@ -132,6 +134,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await loadWorkspace(authUser);
       } catch (err: any) {
+        // A disabled user's profile is hidden by the database, so it comes back as "no rows".
+        if (err?.code === 'PGRST116') {
+          await supabase.auth.signOut();
+          clearWorkspace();
+          if (mounted) {
+            setError('Your access has been disabled. Please contact your administrator.');
+            setLoading(false);
+          }
+          return;
+        }
         console.error('Could not load workspace:', err);
         if (mounted) setError(`Could not load your workspace: ${err?.message || err}`);
       }
@@ -178,34 +190,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (err) {
         const msg =
           err.message === 'Invalid login credentials'
-            ? 'Incorrect email or password. Please verify your credentials or create a new account.'
-            : err.message;
-        setError(msg);
-        throw new Error(msg);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const registerManual = async (email: string, pass: string, displayName: string, workspaceName?: string) => {
-    setError(null);
-    setLoading(true);
-    try {
-      const { data, error: err } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: pass,
-        options: {
-          data: { display_name: displayName.trim(), workspace_name: workspaceName?.trim() || '' },
-          emailRedirectTo: window.location.origin,
-        },
-      });
-      if (err) {
-        setError(err.message);
-        throw err;
-      }
-      if (!data.session) {
-        const msg = 'Account created. Check your inbox and confirm your email, then sign in.';
+            ? 'Incorrect email or password. Please check them, or use "Forgot password?".'
+            : /banned/i.test(err.message)
+              ? 'Your access has been disabled. Please contact your administrator.'
+              : err.message;
         setError(msg);
         throw new Error(msg);
       }
@@ -265,7 +253,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sendPasswordReset,
         updatePassword,
         loginManual,
-        registerManual,
         createTenant,
         switchTenant,
         logout,

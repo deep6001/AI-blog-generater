@@ -47,6 +47,8 @@ export interface LayoutReport {
   /** Problems found before correction. */
   initialIssues: string[];
   passes: number;
+  /** The article was rebuilt on the sample's exact section blueprint. */
+  builtFromSample?: boolean;
   error?: string;
 }
 
@@ -106,6 +108,8 @@ export interface ResearchPack {
   approvedReferences?: ApprovedReference[];
   rejectedReferences?: { url: string; title?: string; reason: string }[];
   approvedReferencesError?: string;
+  /** Set when this pack was reused from an earlier research run for the same topic (its date). */
+  reusedFrom?: string;
 }
 
 export type ReferenceStyle = 'harvard_short' | 'harvard_full';

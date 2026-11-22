@@ -58,6 +58,7 @@ Claims that are commonly made but poorly supported, and genuine disagreements.
 ## Common myths
 Misconceptions with the evidence-based correction.
 
+Use 2 to 4 well-chosen searches, not more.
 Rules: prefer primary and authoritative sources (peer-reviewed journals, PubMed, government and professional bodies) over blogs and forums. Prefer sources from the last 5 years. Never state a statistic you did not find. If you could not find solid evidence for a section, say so plainly.`;
 }
 

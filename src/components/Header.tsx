@@ -10,11 +10,12 @@ import {
   RefreshCw,
   Home,
   ListOrdered,
+  ShieldCheck,
 } from 'lucide-react';
 import { Project } from '../types/pipeline';
 import { useAuth } from '../context/AuthContext';
 
-type Tab = 'pipeline' | 'studio' | 'output' | 'settings';
+type Tab = 'pipeline' | 'studio' | 'output' | 'settings' | 'admin';
 
 interface HeaderProps {
   projects: Project[];
@@ -45,7 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
   lastSavedTime,
   onTriggerSync,
 }) => {
-  const { user, currentTenant, logout } = useAuth();
+  const { user, userProfile, currentTenant, logout } = useAuth();
   const [showSyncDetails, setShowSyncDetails] = useState(false);
   const currentProject = projects.find((p) => p.id === activeProjectId);
 
@@ -54,8 +55,11 @@ export const Header: React.FC<HeaderProps> = ({
       key: 'home',
       label: 'Projects',
       icon: <Home className="w-3.5 h-3.5" />,
-      active: activeProjectId === null,
-      onClick: () => onSelectProject(null),
+      active: activeProjectId === null && activeTab !== 'admin',
+      onClick: () => {
+        onSelectProject(null);
+        if (activeTab === 'admin') setActiveTab('pipeline');
+      },
     },
     ...(currentProject
       ? [
@@ -79,6 +83,17 @@ export const Header: React.FC<HeaderProps> = ({
             icon: <BookOpen className="w-3.5 h-3.5" />,
             active: activeTab === 'output',
             onClick: () => setActiveTab('output'),
+          },
+        ]
+      : []),
+    ...(userProfile?.isSuperAdmin
+      ? [
+          {
+            key: 'admin',
+            label: 'Admin',
+            icon: <ShieldCheck className="w-3.5 h-3.5" />,
+            active: activeTab === 'admin',
+            onClick: () => setActiveTab('admin'),
           },
         ]
       : []),

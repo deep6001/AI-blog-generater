@@ -314,3 +314,32 @@ test('patterns name the callout the sample uses, and invented callout labels are
   assert.match(checkLayout(md, specFromOutline(outline, base)).issues.join('\n'), /Use only the client's callout labels \(\*\*Clinical Note\*\*\)[\s\S]*\*\*Safety Note\*\*/);
 });
 
+// sample 2 plus a Research Insight section with 2 paragraphs after its label.
+const sample2b = sample2.replace(
+  '## Second Question?\n',
+  '## What Did the Trial Show?\n[2 paragraphs, ~40 words each]\n**Research Insight** [bold label on its own line]\n[2 paragraphs, ~40 words each]\n## Second Question?\n'
+);
+
+test('the sample order of special sections and each callout shape are read from the sample', () => {
+  const spec = specFromOutline(sample2b, base);
+  assert.deepEqual(spec.patterns.order, ['UK Guidance Note', 'table', 'list', 'Evidence Note', 'Research Insight']);
+  assert.equal(spec.patterns.bodyCount, 5);
+});
+
+test('a callout in the wrong shape, special sections out of order and bad Title Case are flagged', () => {
+  const spec = specFromOutline(sample2b, { ...base, minWords: 0, maxWords: 99999 });
+  const p = (n = 30) => words(n);
+  const sec = {
+    uk: `## First Question?\n\n${p()}\n\n${p()}\n\n**UK Guidance Note**\n${p()}\n\n`,
+    table: `## Options At A Glance\n\n| A | B | C |\n| --- | --- | --- |\n| x | y | z |\n\n`,
+    list: `## Can It Interact With Other Medicines?\n\n${p()}\n\n- Warfarin: reduced effect.\n- Dabigatran: reduced effect.\n- Statins: lower levels.\n- Omeprazole: lower levels.\n\n${p()}\n\n**Evidence Note**\nIn a 2018 trial of 1,207 men, ${p(25)}\n\n`,
+    research: `## What Did the Trial Show?\n\n${p()}\n\n${p()}\n\n**Research Insight**\nIn 2018, 1,207 men took part; ${p(25)}\n\n`,
+  };
+  const md = `# Title?\n\n${p()}\n\n${p()}\n\n${sec.table}${sec.uk}${sec.list}${sec.research}## Second Question?\n\n${p()}\n\n${p()}\n\n## Final Thoughts: A Better Choice?\n\n${p()}\n\n${p()}\n`;
+  const issues = checkLayout(md, spec).issues.join('\n');
+  assert.match(issues, /"What Did the Trial Show\?" holds the \*\*Research Insight\*\*; in the sample that section is 2 paragraphs, then a bold callout label on its own line, then 2 paragraphs/);
+  assert.match(issues, /same order as the sample: the \*\*UK Guidance Note\*\*, then the table section[\s\S]*This article has the table section, then the \*\*UK Guidance Note\*\*/);
+  assert.match(issues, /Title Case[\s\S]*"Options At A Glance"/);
+  assert.doesNotMatch(issues, /"Final Thoughts: A Better Choice\?"/);
+});
+

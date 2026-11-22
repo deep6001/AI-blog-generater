@@ -4,7 +4,7 @@ import { guidelinePayload } from '../services/guidelines';
 import { ModelCatalog, modelName } from '../services/models';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/supabase';
-import { fetchResearch, saveResearchRun } from '../services/research';
+import { fetchResearch, findRecentResearch, saveResearchRun } from '../services/research';
 import {
   interpolatePrompt,
   calculateGeminiCost,
@@ -121,6 +121,9 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
     onUpdateSession({ ...session, research: researchRef.current });
   };
 
+  // "Research again" skips reuse of earlier research for the next run.
+  const [forceFreshResearch, setForceFreshResearch] = useState(false);
+
   // The client's approved reference sites: the project's own list, else the guideline profile's domains.
   const approvedSources = project.approvedSources?.length ? project.approvedSources : guidelines?.allowedDomains || [];
 
@@ -134,9 +137,25 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
     const enough = approvedSources.length
       ? !!existing?.approvedReferences?.length
       : (existing?.sources.length || 0) >= neededSources;
-    if (existing && existing.topic === topic.trim() && sameApproved && enough) return existing;
+    if (!forceFreshResearch && existing && existing.topic === topic.trim() && sameApproved && enough) return existing;
 
     setResearchStatus({ state: 'running', startedAt: new Date().toISOString() });
+    // Web research is the most expensive part of a run: reuse this workspace's recent research for the
+    // same topic and approved sources instead of paying for the same searches again.
+    if (!forceFreshResearch && currentTenant) {
+      const recent = await findRecentResearch({
+        tenantId: currentTenant.id,
+        topic,
+        approvedSources,
+        minSources: neededSources,
+      }).catch(() => null);
+      if (recent) {
+        researchRef.current = recent;
+        setResearchStatus({ state: 'idle' });
+        return recent;
+      }
+    }
+    setForceFreshResearch(false);
     try {
       const pack = await fetchResearch(project, topic.trim(), approvedSources, project.model, neededSources);
       researchRef.current = pack;
@@ -268,7 +287,14 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       return {
         article: data.article || article,
-        report: { wordCount: data.wordCount, range: data.range, issues: data.issues, initialIssues: data.initialIssues, passes: data.passes },
+        report: {
+          wordCount: data.wordCount,
+          range: data.range,
+          issues: data.issues,
+          initialIssues: data.initialIssues,
+          passes: data.passes,
+          builtFromSample: data.builtFromSample,
+        },
       };
     } catch (err: any) {
       // The article itself is fine to keep; only the check failed.
@@ -904,8 +930,10 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
       }
     : runningIndex >= 0 && finalizingSince
       ? {
-          label: `Checking the article against the template and word range`,
-          detail: 'Comparing layout, callouts, closing sections, references and word count, and correcting any differences.',
+          label: guidelines?.sampleOutline ? 'Building the article on the sample layout' : 'Checking the article against the template and word range',
+          detail: guidelines?.sampleOutline
+            ? "Placing the content into the sample's exact sections, callouts, table and list, then checking wording, length and references. This usually takes 3 to 5 minutes."
+            : 'Comparing layout, callouts, closing sections, references and word count, and correcting any differences.',
           startedAt: finalizingSince,
           completed: completedCount,
           total: activeSteps.length,
@@ -1104,11 +1132,30 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
                   : research
                     ? `${research.sources.length} sources found for "${research.topic}"${
                         research.approvedReferences ? `, ${research.approvedReferences.length} approved references checked` : ''
+                      }${
+                        research.reusedFrom
+                          ? `. Reused research from ${new Date(research.reusedFrom).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} to save cost.`
+                          : ''
                       }`
                     : project.referenceUrls?.length
                       ? `Will also study ${project.referenceUrls.length} reference article${project.referenceUrls.length === 1 ? '' : 's'}`
                       : 'Add reference articles in project settings to match their style'}
               </span>
+              {research?.reusedFrom && !isRunning && !forceFreshResearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    researchRef.current = undefined;
+                    setForceFreshResearch(true);
+                  }}
+                  className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                >
+                  Research again
+                </button>
+              )}
+              {forceFreshResearch && !isRunning && (
+                <span className="text-[11px] text-slate-500">Fresh research will run on the next generation.</span>
+              )}
             </div>
 
             {researchStatus.state === 'failed' && (

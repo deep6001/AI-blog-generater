@@ -13,7 +13,9 @@ const { runResearch, researchContext, findUnverifiedUrls } = await import('./ser
 const { guidelinesContext, runQaReview } = await import('./server/guidelines');
 const { summariseSampleDocx } = await import('./server/sampleDoc');
 const { requireUser } = await import('./server/auth');
+const { AdminError, createUser, listUsers, requireSuperAdmin, setAccess, setPassword } = await import('./server/admin');
 const { finalizeArticle, specFromOutline } = await import('./server/layoutCheck');
+const { blueprintFromOutline, buildFromBlueprint, fillPrompt } = await import('./server/skeleton');
 const { wordRange } = await import('./server/guidelines');
 type ModelInfo = import('./server/llm').ModelInfo;
 type GuidelineInput = import('./server/guidelines').GuidelineInput;
@@ -237,18 +239,70 @@ app.post('/api/finalize', requireUser, async (req, res) => {
   }
 
   try {
-    const deadline = AbortSignal.timeout(QA_TIMEOUT_MS * 2);
-    const result = await finalizeArticle(
-      article,
-      spec,
-      async (prompt) => (await generate(info, { prompt, temperature: 0.3, signal: deadline })).text,
-      { sources: validSources }
-    );
-    res.json({ ...result, range: [minWords, maxWords], model: info.id });
+    const deadline = AbortSignal.timeout(QA_TIMEOUT_MS * 4); // blueprint fill plus up to 5 correction passes
+    const complete = async (prompt: string, temperature = 0.3) => (await generate(info, { prompt, temperature, signal: deadline })).text;
+
+    // With a sample, rebuild the draft on the sample's exact blueprint first, so the layout matches by
+    // construction. The checks and correction passes below then deal with wording and length.
+    let draft = article;
+    let builtFromSample = false;
+    const bp = blueprintFromOutline(profile?.sampleOutline);
+    if (bp) {
+      const built = await buildFromBlueprint(
+        bp,
+        fillPrompt({
+          bp,
+          draft: article,
+          minWords,
+          maxWords,
+          sampleWords: profile?.sampleWordCount,
+          rules: profile?.writingRules,
+          internalLinks: profile?.internalLinks,
+          sources: validSources,
+        }),
+        (prompt) => complete(prompt, 0.2)
+      );
+      if (!('problems' in built)) {
+        draft = built.article;
+        builtFromSample = true;
+      } else {
+        console.warn('Could not fit the article to the sample blueprint:', built.problems.slice(0, 5).join(' | '));
+      }
+    }
+
+    const result = await finalizeArticle(draft, spec, (prompt) => complete(prompt), { sources: validSources });
+    res.json({ ...result, builtFromSample, range: [minWords, maxWords], model: info.id });
   } catch (err: any) {
     sendModelError(res, '/api/finalize', err, info);
   }
 });
+
+// Super admin: manage who can use BlogCraft.
+function adminRoute(fn: (req: express.Request, res: express.Response) => Promise<unknown>) {
+  return async (req: express.Request, res: express.Response) => {
+    try {
+      res.json((await fn(req, res)) ?? { ok: true });
+    } catch (err: any) {
+      const status = err instanceof AdminError ? err.status : 500;
+      if (status >= 500) console.error('Admin action failed:', err?.message || err);
+      res.status(status).json({ error: err?.message || 'The admin action failed.' });
+    }
+  };
+}
+app.get('/api/admin/users', requireUser, requireSuperAdmin, adminRoute(async () => ({ users: await listUsers() })));
+app.post('/api/admin/users', requireUser, requireSuperAdmin, adminRoute(async (req) => createUser(req.body || {})));
+app.post(
+  '/api/admin/users/:id/access',
+  requireUser,
+  requireSuperAdmin,
+  adminRoute(async (req, res) => setAccess(req.params.id, req.body?.enabled === true, res.locals.userId))
+);
+app.post(
+  '/api/admin/users/:id/password',
+  requireUser,
+  requireSuperAdmin,
+  adminRoute(async (req) => setPassword(req.params.id, req.body?.password))
+);
 
 app.post('/api/chat-refine', requireUser, async (req, res) => {
   const { stepTitle, currentOutput, userMessage, systemRole, model } = req.body;

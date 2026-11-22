@@ -79,7 +79,7 @@ Reply with only a JSON array of 5 strings.`,
   const queries = (parseJson<string[]>(q.text) || []).filter((s) => typeof s === 'string').slice(0, 5);
   if (!queries.length) return { studies: [], queries: [], usage: q.usage };
 
-  const ids = [...new Set((await Promise.all(queries.map((t) => searchPubmed(t, 8, signal).catch(() => [])))).flat())].slice(0, 30);
+  const ids = [...new Set((await Promise.all(queries.map((t) => searchPubmed(t, 8, signal).catch(() => [])))).flat())].slice(0, 20);
   const papers = (await fetchAbstracts(ids, signal)).filter((p) => p.pmid && p.title);
   if (!papers.length) return { studies: [], queries, usage: q.usage };
 
@@ -91,7 +91,7 @@ For each one you keep, write a note using ONLY the abstract: year, study type, n
 
 Reply with only a JSON array: [{"pmid": "...", "note": "..."}]. Reply [] if none qualify.
 
-${papers.map((p) => `PMID ${p.pmid} (${p.year}): ${p.title}\n${p.abstract.slice(0, 1200)}`).join('\n\n')}`,
+${papers.map((p) => `PMID ${p.pmid} (${p.year}): ${p.title}\n${p.abstract.slice(0, 900)}`).join('\n\n')}`,
     temperature: 0.1,
     signal,
   });

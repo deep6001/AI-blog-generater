@@ -28,7 +28,7 @@ export const LayoutReportPanel: React.FC<{ report: LayoutReport }> = ({ report }
     >
       <p className="font-semibold flex items-center gap-1.5">
         {ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-        {ok ? 'Matches the template' : `${report.issues.length} template difference${report.issues.length === 1 ? '' : 's'} remain`}
+        {ok ? (report.builtFromSample ? "Built on the sample's layout" : 'Matches the template') : `${report.issues.length} template difference${report.issues.length === 1 ? '' : 's'} remain`}
         <span className="font-normal">
           · {report.wordCount.toLocaleString('en-GB')} words {inRange ? 'within' : 'outside'} the {min.toLocaleString('en-GB')}–
           {max.toLocaleString('en-GB')} range (excluding references)

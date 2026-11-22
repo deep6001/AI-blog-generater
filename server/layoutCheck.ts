@@ -1,5 +1,5 @@
 import { isApproved } from './references';
-import { describeBlocks, patternsFromOutline, patternsText, type PatternBlock, type SamplePatterns, type SectionPattern } from './samplePatterns';
+import { describeBlocks, patternsFromOutline, patternsText, specialsOf, type PatternBlock, type SamplePatterns, type SectionPattern } from './samplePatterns';
 // Checks a finished article against the client's sample template and word range, and builds the
 // instructions for a correction pass. The checks are deterministic so the model can't "agree"
 // that it followed the format when it didn't. Body sections are compared with the sample's exact
@@ -389,6 +389,61 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
       }
     }
   }
+  // Each callout keeps the exact shape it has in the sample (e.g. Research Insight: 2 paragraphs after).
+  const shapeIssues: string[] = [];
+  for (const s of body) {
+    const got = sectionBlocks(s);
+    for (const label of s.blocks.filter((b) => b.kind === 'callout' && b.label).map((b) => b.label!)) {
+      const own = patterns.find((p) => p.labels.some((l) => l.toLowerCase() === label.toLowerCase()));
+      if (own && own.blocks.join() !== got.blocks.join()) {
+        shapeIssues.push(`"${s.heading}" holds the **${label}**; in the sample that section is ${describeBlocks(own.blocks, own)}`);
+      }
+    }
+  }
+  if (shapeIssues.length) issues.push(`Give each callout's section the same shape as in the sample: ${shapeIssues.join('; ')}.`);
+
+  // The special sections (table, list, callouts) come in the sample's order.
+  const sampleOrder = spec.patterns.order;
+  if (sampleOrder.length > 1) {
+    const known = new Set(sampleOrder.map((x) => x.toLowerCase()));
+    const gotOrder = body
+      .flatMap((s) => specialsOf(sectionBlocks(s).blocks, s.blocks.filter((b) => b.kind === 'callout').map((b) => b.label || '')))
+      .filter((x) => known.has(x.toLowerCase()));
+    const name = (x: string) => (x === 'table' ? 'the table section' : x === 'list' ? 'the list section' : `the **${x}**`);
+    if (gotOrder.length === sampleOrder.length && gotOrder.join('|').toLowerCase() !== sampleOrder.join('|').toLowerCase()) {
+      issues.push(
+        `Put the special sections in the same order as the sample: ${sampleOrder.map(name).join(', then ')}. This article has ${gotOrder
+          .map(name)
+          .join(', then ')}. Fix the order by moving callout blocks (the label and its paragraphs, adapted to fit) into suitable sections, and the table or list section to the matching point. Keep the questions in a sensible reading order: basic questions (what it is, whether it can be done) stay near the start.`
+      );
+    }
+  }
+  if (spec.patterns.bodyCount && Math.abs(body.length - spec.patterns.bodyCount) > 2) {
+    issues.push(`The sample has ${spec.patterns.bodyCount} body sections; this article has ${body.length}. Use about the same number.`);
+  }
+
+  // Title Case as in the sample: short joining words stay lower case ("Eligibility at a Glance").
+  const SMALL = /^(a|an|and|as|at|but|by|for|in|nor|of|on|or|the|to|vs)$/i;
+  const badHeadings = [
+    ...(markdown.match(/^#\s+(.+)$/m) ? [markdown.match(/^#\s+(.+)$/m)![1]] : []),
+    ...sections.filter((s) => s.heading).map((s) => s.heading),
+  ].filter((h) =>
+    // Each part after a colon starts fresh ("Final Thoughts: A Guide").
+    h.split(':').some((part) =>
+      part
+        .trim()
+        .split(/\s+/)
+        .slice(1)
+        .map((w) => w.replace(/[?,.!]/g, ''))
+        .some((w) => SMALL.test(w) && /^[A-Z][a-z]*$/.test(w))
+    )
+  );
+  if (badHeadings.length) {
+    issues.push(
+      `Use the sample's Title Case: keep short joining words (a, an, and, at, for, in, of, on, or, the, to) lower case unless they start the heading. Fix: ${badHeadings.map((h) => `"${h}"`).join('; ')}.`
+    );
+  }
+
   if (intro) {
     const got = sectionBlocks(sections[0]).blocks;
     if (got.join() !== intro.join()) {
@@ -645,14 +700,22 @@ export async function finalizeArticle(
   const start = dedupeReferences(markdown, spec.referencesHeading);
   let best = { article: start, ...checkLayout(start, spec) };
   let passes = 0;
+  // Up to 3 passes, plus up to 2 more while each pass is still making the article better.
+  const base = opts.maxPasses ?? 3;
+  const limit = opts.maxPasses ?? 5;
+  let improved = true;
 
-  while (best.issues.length && passes < (opts.maxPasses ?? 3)) {
+  while (best.issues.length && passes < limit && (passes < base || improved)) {
     passes++;
+    improved = false;
     const revised = dedupeReferences((await fix(correctionPrompt(best.article, best.issues, spec, opts.sources))).trim(), spec.referencesHeading);
     // A pass that drops most of the article is a failed pass, not a shorter article.
     if (!revised || countWords(revised) < spec.minWords * 0.6) continue;
     const report = checkLayout(revised, spec);
-    if (score(report) < score(best)) best = { article: revised, ...report };
+    if (score(report) < score(best)) {
+      best = { article: revised, ...report };
+      improved = true;
+    }
   }
   return { ...best, passes, initialIssues };
 }

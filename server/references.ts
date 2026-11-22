@@ -120,6 +120,7 @@ Find at least ${needed} different pages on them that discuss: "${topic}", or the
 Look FIRST for original studies (trials, case series, cohort studies) of the exact device, product or treatment named in the topic, including studies of earlier versions of it. Then systematic reviews and official guidance.
 Readers: ${audience || 'general readers'}.
 ${have.length ? `Already found, do NOT return these again:\n${have.map((u) => `- ${u}`).join('\n')}\n` : ''}
+Use at most 5 searches.
 For each page, write one bullet: the page title, then exactly what it says that is relevant. For a study give the year, number of participants (and how many were treated on the relevant area), the protocol (sessions and intervals), what was measured, the main result with its figures, and its limitations. Use only what the pages say. Do not use any other website.`;
 }
 
@@ -145,7 +146,14 @@ export async function findApprovedReferences(
   timeoutMs: number
 ): Promise<ApprovedReferenceResult> {
   const { domains, prefixes } = parseApproved(input.approved);
-  const searchDomains = [...new Set([...domains, ...prefixes.map((p) => p.split('/')[0])])];
+  const allDomains = [...new Set([...domains, ...prefixes.map((p) => p.split('/')[0])])];
+  // PubMed and PMC are covered by the free PubMed look-up below, so the paid web search skips them.
+  const pubmedApproved = isApproved('https://pubmed.ncbi.nlm.nih.gov/1/', input.approved);
+  const NCBI = /(^|\.)ncbi\.nlm\.nih\.gov$/;
+  // Journal publishers' medical papers are indexed on PubMed too, so the free look-up finds them.
+  const JOURNALS =
+    /(^|\.)(mdpi\.com|sciencedirect\.com|academic\.oup\.com|springer\.com|link\.springer\.com|onlinelibrary\.wiley\.com|tandfonline\.com|bmj\.com|thelancet\.com|nature\.com|frontiersin\.org|jamanetwork\.com|nejm\.org|journals\.lww\.com|karger\.com|cambridge\.org|sagepub\.com|cureus\.com|plos\.org|journals\.plos\.org)$/;
+  const searchDomains = pubmedApproved ? allDomains.filter((d) => !NCBI.test(d) && !JOURNALS.test(d)) : allDomains;
   const terms = topicTerms(input.topic);
   const candidates = new Map<string, { title: string; url: string; domain: string; note?: string; fromSearch: boolean; abstract?: boolean }>();
   const searchQueries: string[] = [];
@@ -160,15 +168,17 @@ export async function findApprovedReferences(
   }
 
   // Primary studies straight from PubMed, when the client accepts PubMed. Runs alongside the web search.
-  const pubmed = isApproved('https://pubmed.ncbi.nlm.nih.gov/1/', input.approved)
+  const pubmed = pubmedApproved
     ? findPubmedStudies(info, input.topic, AbortSignal.timeout(timeoutMs)).catch((err) => {
         console.warn('PubMed study search failed:', err?.message || err);
         return null;
       })
     : Promise.resolve(null);
 
-  const target = Math.max(input.needed, 3) + 3; // a few spare, some will fail the check
-  for (let round = 0; round < 2 && searchDomains.length; round++) {
+  // A couple of spare pages, since some fail the topic check. With PubMed supplying studies, one round is enough.
+  const target = Math.max(input.needed, 3) + (pubmedApproved ? 1 : 3);
+  const rounds = pubmedApproved ? 1 : 2;
+  for (let round = 0; round < rounds && searchDomains.length; round++) {
     const found = [...candidates.values()].filter((c) => c.fromSearch).length;
     if (found >= target) break;
     try {

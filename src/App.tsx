@@ -11,6 +11,7 @@ import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthScreen } from './components/AuthScreen';
 import { ResetPasswordScreen } from './components/ResetPasswordScreen';
+import { AdminPanel } from './components/AdminPanel';
 import { TenantSwitcherModal } from './components/TenantSwitcherModal';
 import { GuidelinesModal } from './components/GuidelinesModal';
 import { loadGuidelineProfiles } from './services/guidelines';
@@ -38,7 +39,7 @@ export default function App() {
 }
 
 function MainAppContent() {
-  const { user, currentTenant, loading, passwordRecovery } = useAuth();
+  const { user, userProfile, currentTenant, loading, passwordRecovery } = useAuth();
   const [isTenantModalOpen, setIsTenantModalOpen] = useState(false);
 
   // Empty until the signed-in user's workspace has loaded; nothing is read or saved before then.
@@ -62,7 +63,7 @@ function MainAppContent() {
     return [];
   });
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'studio' | 'output' | 'settings'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'studio' | 'output' | 'settings' | 'admin'>('pipeline');
   const [sessions, setSessions] = useState<Record<string, RunSession>>({});
 
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
@@ -309,7 +310,7 @@ function MainAppContent() {
 
   const handleSelectProject = (projId: string | null) => {
     setActiveProjectId(projId);
-    if (projId) {
+    if (projId || activeTab === 'admin') {
       setActiveTab('pipeline');
     }
   };
@@ -371,7 +372,9 @@ function MainAppContent() {
 
       {/* Main Content Area */}
       <main className="flex-1 pb-16">
-        {!activeProject ? (
+        {activeTab === 'admin' && userProfile?.isSuperAdmin ? (
+          <AdminPanel />
+        ) : !activeProject ? (
           /* Projects Dashboard */
           <ProjectList
             projects={projects}
