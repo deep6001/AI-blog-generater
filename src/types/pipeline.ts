@@ -27,6 +27,11 @@ export interface Project {
   guidelineProfileId?: string | null;
   /** "provider:model" for every step unless a step overrides it; empty uses the server default. */
   model?: string | null;
+  /** This project's own sample article; overrides the guideline profile's sample for this project only. */
+  sampleName?: string | null;
+  sampleOutline?: string | null;
+  sampleWordCount?: number | null;
+  sampleStyle?: SampleStyle | null;
   createdAt: string;
   updatedAt: string;
   steps: PipelineStep[];

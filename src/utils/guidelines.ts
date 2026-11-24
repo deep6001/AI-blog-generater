@@ -1,4 +1,4 @@
-import { GuidelineProfile } from '../types/pipeline';
+import { GuidelineProfile, Project } from '../types/pipeline';
 
 // Defaults for a new profile, condensed from the agency's UK medical blog guidelines,
 // reference-checking instructions, proofreading rules, QA checklist and client feedback.
@@ -117,6 +117,28 @@ OUTPUT
 - Give exact copy-paste replacement wording with the precise location of each change. Be explicit about every point; never just a general summary.`;
 
 export const DEFAULT_REFERENCE_MIX = '2 MDPI, 2 PMC, 2 PubMed, 2 ScienceDirect';
+
+/**
+ * The guidelines a project actually runs with: its profile, with the project's own sample article in
+ * place of the profile's when the project has one. A project with a sample but no profile gets the
+ * default rules, so its sample still applies.
+ */
+export function effectiveGuidelines(project: Project | null, profile: GuidelineProfile | null): GuidelineProfile | null {
+  if (!project?.sampleOutline) return profile;
+  const base: GuidelineProfile = profile ?? {
+    ...createDefaultGuidelineProfile(`${project.name} (project sample)`),
+    id: `project-${project.id}`,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  };
+  return {
+    ...base,
+    sampleName: project.sampleName ?? null,
+    sampleOutline: project.sampleOutline,
+    sampleWordCount: project.sampleWordCount ?? null,
+    sampleStyle: project.sampleStyle ?? null,
+  };
+}
 
 export function createDefaultGuidelineProfile(name: string): Omit<GuidelineProfile, 'id' | 'createdAt' | 'updatedAt'> {
   return {

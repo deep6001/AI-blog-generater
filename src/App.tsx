@@ -15,6 +15,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { TenantSwitcherModal } from './components/TenantSwitcherModal';
 import { GuidelinesModal } from './components/GuidelinesModal';
 import { loadGuidelineProfiles } from './services/guidelines';
+import { effectiveGuidelines } from './utils/guidelines';
 import { GuidelineProfile } from './types/pipeline';
 import { EMPTY_CATALOG, fetchModelCatalog, ModelCatalog } from './services/models';
 import {
@@ -233,8 +234,11 @@ function MainAppContent() {
   }, []);
 
   const activeProject = projects.find((p) => p.id === activeProjectId) || null;
-  const activeGuidelines =
-    guidelineProfiles.find((g) => g.id === activeProject?.guidelineProfileId) || null;
+  // The project's own sample, when it has one, replaces the profile's sample for this project only.
+  const activeGuidelines = effectiveGuidelines(
+    activeProject,
+    guidelineProfiles.find((g) => g.id === activeProject?.guidelineProfileId) || null
+  );
 
   const getOrCreateSession = (projId: string): RunSession => {
     if (sessions[projId]) return sessions[projId];

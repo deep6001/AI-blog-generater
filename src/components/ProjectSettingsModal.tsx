@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Project, GuidelineProfile } from '../types/pipeline';
-import { Settings2, Save, X, BookMarked } from 'lucide-react';
+import { Settings2, Save, X, BookMarked, FileText, Loader2, Upload } from 'lucide-react';
 import { ModelCatalog } from '../services/models';
+import { analyseSampleDocx } from '../services/guidelines';
 
 interface ProjectSettingsModalProps {
   project: Project | null;
@@ -34,6 +35,34 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
   const [targetWordCount, setTargetWordCount] = useState(project.targetWordCount);
   const [referenceUrls, setReferenceUrls] = useState((project.referenceUrls || []).join('\n'));
   const [approvedSources, setApprovedSources] = useState((project.approvedSources || []).join('\n'));
+  // This project's own sample article (overrides the profile's sample for this project only).
+  const [sample, setSample] = useState({
+    name: project.sampleName ?? null,
+    outline: project.sampleOutline ?? null,
+    wordCount: project.sampleWordCount ?? null,
+    style: project.sampleStyle ?? null,
+  });
+  const [sampleBusy, setSampleBusy] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+  const profileSample = guidelineProfiles.find((g) => g.id === guidelineProfileId)?.sampleName || null;
+
+  const handleSampleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setSampleError(null);
+    if (!/\.docx$/i.test(file.name)) {
+      setSampleError('Choose a Word .docx file.');
+      return;
+    }
+    setSampleBusy(true);
+    try {
+      const summary = await analyseSampleDocx(file);
+      setSample({ name: file.name, outline: summary.outline, wordCount: summary.wordCount, style: summary.style });
+    } catch (err: any) {
+      setSampleError(err.message || 'Could not read the sample.');
+    } finally {
+      setSampleBusy(false);
+    }
+  };
   const [guidelineProfileId, setGuidelineProfileId] = useState(project.guidelineProfileId || '');
 
   useEffect(() => {
@@ -62,6 +91,10 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
         .split(/\s+/)
         .map((u) => u.trim())
         .filter((u) => /^https?:\/\/\S+$/i.test(u)),
+      sampleName: sample.outline ? sample.name : null,
+      sampleOutline: sample.outline,
+      sampleWordCount: sample.outline ? sample.wordCount : null,
+      sampleStyle: sample.outline ? sample.style : null,
       approvedSources: [
         ...new Set(
           approvedSources
@@ -193,6 +226,50 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
               The client's writing, reference and QA rules are added to every step and used for the QA review.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Sample Article for This Project
+            </label>
+            <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+              <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+              <span className="text-xs text-slate-700 dark:text-slate-200 flex-1 min-w-0 break-all">
+                {sample.outline
+                  ? `${sample.name || 'Sample'} (this project only${sample.wordCount ? `, ~${sample.wordCount} words` : ''})`
+                  : profileSample
+                    ? `Using the client profile's sample: ${profileSample}`
+                    : 'No sample. Articles follow the written rules only.'}
+              </span>
+              <label className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 cursor-pointer inline-flex items-center gap-1.5">
+                {sampleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                <span>{sample.outline ? 'Replace' : 'Upload .docx'}</span>
+                <input
+                  type="file"
+                  accept=".docx"
+                  className="hidden"
+                  disabled={sampleBusy}
+                  onChange={(e) => {
+                    handleSampleFile(e.target.files?.[0]);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              {sample.outline && (
+                <button
+                  type="button"
+                  onClick={() => setSample({ name: null, outline: null, wordCount: null, style: null })}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            {sampleError && <p className="text-[11px] text-rose-600 mt-1">{sampleError}</p>}
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+              Articles in this project copy this sample's layout. It does not change other projects, even ones using the same client
+              profile. Remove it to go back to the profile's sample.
             </p>
           </div>
 
