@@ -44,7 +44,6 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
   });
   const [sampleBusy, setSampleBusy] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
-  const profileSample = guidelineProfiles.find((g) => g.id === guidelineProfileId)?.sampleName || null;
 
   const handleSampleFile = async (file: File | undefined) => {
     if (!file) return;
@@ -64,6 +63,8 @@ const ProjectSettingsForm: React.FC<ProjectSettingsModalProps & { project: Proje
     }
   };
   const [guidelineProfileId, setGuidelineProfileId] = useState(project.guidelineProfileId || '');
+  // After guidelineProfileId: reading it earlier throws "cannot access before initialization".
+  const profileSample = guidelineProfiles.find((g) => g.id === guidelineProfileId)?.sampleName || null;
 
   useEffect(() => {
     if (project) {
