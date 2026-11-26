@@ -86,6 +86,8 @@ Reply with only JSON: {"exact": ["...", "..."], "generic": ["...", "...", "..."]
     ...exact.map((t) => searchPubmed(t, 6, signal, 'pub_date')),
     ...exact.map((t) => searchPubmed(t, 6, signal)),
     ...generic.map((t) => searchPubmed(t, 5, signal)),
+    // Guidelines, systematic reviews and trials on the topic, which carry most weight for patients.
+    ...exact.slice(0, 1).map((t) => searchPubmed(`(${t}) AND (systematic[sb] OR guideline[pt] OR randomized controlled trial[pt])`, 6, signal)),
   ];
   const ids = [...new Set((await Promise.all(searches.map((p) => p.catch(() => [] as string[])))).flat())].slice(0, 24);
   const papers = (await fetchAbstracts(ids, signal)).filter((p) => p.pmid && p.title);
@@ -94,7 +96,7 @@ Reply with only JSON: {"exact": ["...", "..."], "generic": ["...", "...", "..."]
   const pick = await generate(info, {
     prompt: `Blog topic: "${topic}"
 Below are PubMed records. Keep only those that are genuinely useful evidence for this topic: studies of the same technology or treatment (or its earlier versions), on the same body area or problem, and reviews or guidance that discuss it directly. Leave out anything about other conditions, unrelated devices or other body areas.
-Studies that address the topic's own question directly (and recent systematic reviews) matter most; keep them ahead of older or indirect evidence. Keep at most 10.
+Rank what you keep: guidelines and consensus statements first, then systematic reviews and meta-analyses (Cochrane above all), then randomised trials, then other studies. Within each, studies that answer the topic's own question come first. Keep at most 10, and start each note with the study type.
 
 For each one you keep, write a note using ONLY the abstract: year, study type, number of participants (and how many were treated on the relevant area), protocol (sessions and interval), what was measured, the main result with its figures, and any limitation.
 

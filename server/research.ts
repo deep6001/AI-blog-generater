@@ -2,6 +2,8 @@ import { addUsage, readUrls, webSearch, type ModelInfo, type Usage, type WebSour
 import { findApprovedReferences, type ApprovedReference, type RejectedReference } from './references';
 import { withCitations } from './citations';
 import { findPubmedStudies } from './pubmed';
+import { checklistRule, checklistFromBrief } from './coverage';
+import { evidenceRule, DEFAULT_EVIDENCE, REFERENCE_PRIORITY, sourceKind } from './evidence';
 
 export type ResearchSource = WebSource & { citation?: string };
 
@@ -43,6 +45,9 @@ Produce a research brief in Markdown that a writer will rely on. Use only what y
 ## What readers are really asking
 The 6 to 10 concrete questions people search for on this topic, phrased as a reader would ask them.
 
+## Questions this article must answer
+A numbered list of 12 to 18 questions a patient needs answered. Each question is about ONE thing (never a list of topics in one question) and no two ask the same thing. Include, where they apply to the topic: what it is and why it is needed; how it is done; pain relief; the main risks for the patient and how common they are; specific complications (e.g. serious tears); the risks for a baby or partner and how common they are, including specific conditions; what happens immediately after; wound or stitch healing; bladder and bowel problems; pelvic floor recovery; infection and whether antibiotics are given; the warning signs that need urgent help; what happens if it does not work; effects on future treatment or a future pregnancy; emotional recovery and support; and the alternatives.
+
 ## Primary studies on this exact treatment
 Search specifically for original studies (trials, case series, cohort studies) of the exact device, product or treatment named in the topic, including earlier versions of the same device. For each: first author and year, journal, number of participants and how many were treated on the area the topic is about, the protocol (number of sessions and interval), what was measured, the main result with its figures, and the limitations. If there are none for the exact treatment, say so and name the closest studies.
 
@@ -50,7 +55,7 @@ Search specifically for original studies (trials, case series, cohort studies) o
 Bullet points. Each one states a specific finding with its number, who was studied (sample size, population), the source type (trial, review, guideline, manufacturer data) and the year. Include the limitation when the source states one, e.g. "only 5 of 60 participants were men".
 
 ## Official guidance
-What named national or professional bodies relevant to the readers' country say (for UK readers: NHS, NICE, MHRA, GMC or the relevant royal college). Name the body and document.
+What named national or professional bodies relevant to the readers' country say (for UK readers: NHS, NICE, MHRA, GMC or the relevant royal college, e.g. RCOG Green-top Guidelines). Search for them specifically. Name the body, the exact document and number (e.g. "RCOG Green-top Guideline No. 26", "NICE guideline NG194"), its year and what it recommends, with figures where given. Also name any key trial or Cochrane review the guidance relies on.
 
 ## Where evidence is weak or disputed
 Claims that are commonly made but poorly supported, and genuine disagreements.
@@ -196,7 +201,8 @@ export function researchContext(
   pack: Pick<ResearchResult, 'brief' | 'sources' | 'styleNotes' | 'createdAt' | 'approvedReferences'>
 ): string {
   const cite = (c?: string) => (c ? `\n    Cite as: ${c}` : '');
-  const sourceList = pack.sources.map((s) => `[${s.id}] ${s.title}. ${s.url}${cite(s.citation)}`).join('\n');
+  const sourceList = pack.sources.map((s) => `[${s.id}] (${sourceKind(s.url, `${s.title} ${s.citation || ''}`)}) ${s.title}. ${s.url}${cite(s.citation)}`).join('\n');
+  const checklist = checklistFromBrief(pack.brief);
   const style = pack.styleNotes ? `\n\n## House style to follow (learned from reference articles)\n${pack.styleNotes}` : '';
   const approved = pack.approvedReferences;
   const approvedList = approved?.length
@@ -229,7 +235,9 @@ ${sourceList}${style}
 - Base factual claims, statistics, study findings and guidance on the source pack above.${referenceRules}
 - When you describe a study (especially in an Evidence Note or Research Insight), give its year, size and main figures from the pack, e.g. "a 2017 study of 34 people, 7 treated on the arms". Never write only "a small study".
 - Say each point once. Do not repeat the same study, caveat or warning in several sections. Lead with what the evidence shows; state each limitation once, where it matters most. Give the reader the answer instead of only telling them to ask a practitioner.
-- If a point needs evidence the pack does not contain, write it without a specific figure or citation.
+- ${evidenceRule(DEFAULT_EVIDENCE, 2700)}
+- ${REFERENCE_PRIORITY}
+${checklist.length ? `- ${checklistRule(checklist)}\n` : ''}- If a point needs evidence the pack does not contain, write it without a specific figure or citation.
 - Do not show the [n] markers in reader-facing prose unless the article format calls for numbered citations.`;
 }
 

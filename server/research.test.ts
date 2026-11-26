@@ -19,8 +19,8 @@ test('findUnverifiedUrls flags links the model made up, once each', () => {
 
 test('researchContext lists every source with its number and exact URL', () => {
   const ctx = researchContext({ brief: 'Fact [1]', sources, createdAt: '2026-10-31T00:00:00Z' });
-  assert.match(ctx, /\[1\] NICE NG110\. https:\/\/www\.nice\.org\.uk\/guidance\/ng110/);
-  assert.match(ctx, /\[2\] PubMed\./);
+  assert.match(ctx, /\[1\] \(guidance\) NICE NG110\. https:\/\/www\.nice\.org\.uk\/guidance\/ng110/);
+  assert.match(ctx, /\[2\] \(study\) PubMed\./);
   assert.match(ctx, /2026-10-31/);
 });
 

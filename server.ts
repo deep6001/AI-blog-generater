@@ -14,8 +14,10 @@ const { guidelinesContext, runQaReview } = await import('./server/guidelines');
 const { summariseSampleDocx } = await import('./server/sampleDoc');
 const { requireUser } = await import('./server/auth');
 const { AdminError, createUser, listUsers, requireSuperAdmin, setAccess, setPassword } = await import('./server/admin');
-const { finalizeArticle, specFromOutline } = await import('./server/layoutCheck');
+const { checkLayout, dedupeReferences, finalizeArticle, specFromOutline } = await import('./server/layoutCheck');
 const { blueprintFromOutline, buildFromBlueprint, fillPrompt } = await import('./server/skeleton');
+const { checklistFromBrief } = await import('./server/coverage');
+const { DEFAULT_EVIDENCE } = await import('./server/evidence');
 const { wordRange } = await import('./server/guidelines');
 type ModelInfo = import('./server/llm').ModelInfo;
 type GuidelineInput = import('./server/guidelines').GuidelineInput;
@@ -26,6 +28,11 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const STEP_TIMEOUT_MS = Number(process.env.STEP_TIMEOUT_MS || process.env.GEMINI_STEP_TIMEOUT_MS) || 120000;
 const RESEARCH_TIMEOUT_MS = Number(process.env.RESEARCH_TIMEOUT_MS || process.env.GEMINI_RESEARCH_TIMEOUT_MS) || 150000;
 const QA_TIMEOUT_MS = Number(process.env.QA_TIMEOUT_MS || process.env.GEMINI_QA_TIMEOUT_MS) || 180000;
+
+// APPROVED_REFERENCE_CHECK=false turns off the approved-reference step: research does not search or
+// check the client's approved sites, and the final check does not enforce the approved list.
+// References then come from the normal research sources. On by default.
+const APPROVED_REFERENCE_CHECK = !/^(false|off|0|no)$/i.test(process.env.APPROVED_REFERENCE_CHECK?.trim() || '');
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -49,6 +56,7 @@ app.get('/api/models', async (_req, res) => {
     defaultModel: await defaultModelRef(),
     providers: availableProviders().map((id) => ({ id, label: PROVIDER_LABELS[id] })),
     models: await listModels(),
+    approvedReferenceCheck: APPROVED_REFERENCE_CHECK,
   });
 });
 
@@ -127,9 +135,10 @@ app.post('/api/research', requireUser, async (req, res) => {
         audience,
         tone,
         referenceUrls: Array.isArray(referenceUrls) ? referenceUrls : [],
-        approvedSources: Array.isArray(approvedSources)
-          ? approvedSources.filter((s: unknown) => typeof s === 'string').slice(0, 40)
-          : [],
+        approvedSources:
+          APPROVED_REFERENCE_CHECK && Array.isArray(approvedSources)
+            ? approvedSources.filter((s: unknown) => typeof s === 'string').slice(0, 40)
+            : [],
         minSources: Math.min(Math.max(Number(minSources) || 0, 0), 15),
       },
       RESEARCH_TIMEOUT_MS
@@ -150,6 +159,7 @@ app.post('/api/generate-step', requireUser, async (req, res) => {
   if (!info) return;
 
   const hasResearch = research && typeof research.brief === 'string' && Array.isArray(research.sources);
+  if (hasResearch && !APPROVED_REFERENCE_CHECK) delete research.approvedReferences;
   const profile = toGuidelineInput(guidelines);
   const fullPrompt =
     prompt +
@@ -210,7 +220,7 @@ app.post('/api/qa-review', requireUser, async (req, res) => {
 
 // Final check: compare the finished article with the sample template and word range, and correct it.
 app.post('/api/finalize', requireUser, async (req, res) => {
-  const { article, guidelines, targetWordCount, sources, approvedSources, model } = req.body;
+  const { article, guidelines, targetWordCount, sources, approvedSources, model, brief, topic } = req.body;
   if (!article || typeof article !== 'string') {
     res.status(400).json({ error: 'Missing article.' });
     return;
@@ -227,6 +237,10 @@ app.post('/api/finalize', requireUser, async (req, res) => {
     noDoiLinks: (profile?.referenceStyle ?? 'harvard_short') === 'harvard_short',
     internalLinkUrls: (profile?.internalLinks.match(/https?:\/\/[^\s|)]+/g) || []).map((u) => u.replace(/[.,]+$/, '')),
   });
+  // Real articles are always held to an evidence bar: the sample's, or a sensible default.
+  spec.evidence ??= DEFAULT_EVIDENCE;
+  spec.mustCover = checklistFromBrief(typeof brief === 'string' ? brief : '');
+  spec.topic = typeof topic === 'string' ? topic : '';
   const validSources = Array.isArray(sources)
     ? sources
         .filter((s: any) => typeof s?.url === 'string')
@@ -236,7 +250,8 @@ app.post('/api/finalize', requireUser, async (req, res) => {
           citation: typeof s.citation === 'string' ? s.citation : undefined,
         }))
     : [];
-  const approved = Array.isArray(approvedSources) ? approvedSources.filter((s: unknown) => typeof s === 'string') : [];
+  const approved =
+    APPROVED_REFERENCE_CHECK && Array.isArray(approvedSources) ? approvedSources.filter((s: unknown) => typeof s === 'string') : [];
   if (approved.length) {
     spec.approvedSources = approved;
     // Only as many references as the approved sites could provide.
@@ -252,8 +267,9 @@ app.post('/api/finalize', requireUser, async (req, res) => {
     let draft = article;
     let builtFromSample = false;
     const bp = blueprintFromOutline(profile?.sampleOutline);
+    let fill: Parameters<typeof fillPrompt>[0] | null = null;
     if (bp) {
-      const fill = {
+      fill = {
         bp,
         draft: article,
         minWords,
@@ -263,10 +279,13 @@ app.post('/api/finalize', requireUser, async (req, res) => {
         internalLinks: profile?.internalLinks,
         sources: validSources,
         voice: spec.voice,
+        evidence: spec.evidence,
+        checklist: spec.mustCover,
+        research: typeof brief === 'string' ? brief.slice(0, 16000) : undefined,
       };
       const built = await buildFromBlueprint(
         bp,
-        (only, written) => fillPrompt(fill, only, written),
+        (only, written) => fillPrompt(fill!, only, written),
         (prompt) => complete(prompt, 0.2)
       );
       if (!('problems' in built)) {
@@ -277,8 +296,29 @@ app.post('/api/finalize', requireUser, async (req, res) => {
       }
     }
 
-    const result = await finalizeArticle(draft, spec, (prompt) => complete(prompt), { sources: validSources });
-    res.json({ ...result, builtFromSample, range: [minWords, maxWords], model: info.id });
+    const result = await finalizeArticle(draft, spec, (prompt) => complete(prompt), {
+      sources: validSources,
+      research: typeof brief === 'string' ? brief : undefined,
+    });
+    let final = result;
+    if (bp && builtFromSample && final.issues.length) {
+      const score = (r: { issues: string[]; wordCount: number }) =>
+        r.issues.length * 1000 + Math.max(0, r.wordCount - spec.maxWords, spec.minWords - r.wordCount);
+      for (let round = 0; round < 2 && final.issues.length; round++) {
+        const current = final;
+        const refill = await buildFromBlueprint(
+          bp,
+          (only, written) => fillPrompt({ ...fill!, draft: current.article, fixes: current.issues }, only, written),
+          (prompt) => complete(prompt, 0.2)
+        );
+        if ('problems' in refill) break;
+        const article = dedupeReferences(refill.article, spec.referencesHeading);
+        const report = checkLayout(article, spec);
+        if (score(report) >= score(current)) break;
+        final = { ...current, article, issues: report.issues, wordCount: report.wordCount, passes: current.passes + 1 };
+      }
+    }
+    res.json({ ...final, builtFromSample, range: [minWords, maxWords], model: info.id });
   } catch (err: any) {
     sendModelError(res, '/api/finalize', err, info);
   }

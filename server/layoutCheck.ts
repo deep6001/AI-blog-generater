@@ -1,5 +1,7 @@
 import { isApproved } from './references';
 import { voiceFromOutline, voiceIssue, type Voice } from './voice';
+import { coverageIssue } from './coverage';
+import { evidenceFromOutline, evidenceIssues, type Evidence } from './evidence';
 import { describeBlocks, patternsFromOutline, patternsText, specialsOf, type PatternBlock, type SamplePatterns, type SectionPattern } from './samplePatterns';
 // Checks a finished article against the client's sample template and word range, and builds the
 // instructions for a correction pass. The checks are deterministic so the model can't "agree"
@@ -26,6 +28,11 @@ export interface LayoutSpec {
   typicalParaWords?: number;
   /** How much the sample speaks to the reader as "you". */
   voice?: Voice | null;
+  /** The sample's use of figures and named guidance; the live final check falls back to a default bar. */
+  evidence?: Evidence | null;
+  /** Questions the research says the article must answer, and the topic (to ignore its own words). */
+  mustCover?: string[];
+  topic?: string;
   /** The sample's exact intro and body section patterns. */
   patterns: SamplePatterns;
   /** Exact References heading text used by the sample, e.g. "References:". */
@@ -234,6 +241,7 @@ export function specFromOutline(outline: string | null | undefined, base: SpecBa
     patterns: patternsFromOutline(outline),
     typicalParaWords: typicalParaWords(outline),
     voice: voiceFromOutline(outline),
+    evidence: evidenceFromOutline(outline),
     referencesHeading,
   };
 }
@@ -528,6 +536,9 @@ export function checkLayout(markdown: string, spec: LayoutSpec): LayoutReport {
   }
 
   issues.push(...contentIssues(markdown, spec.typicalParaWords));
+  const coverage = coverageIssue(markdown, spec.mustCover || [], spec.topic);
+  if (coverage) issues.push(coverage);
+  if (spec.evidence) issues.push(...evidenceIssues(markdown, spec.evidence));
   const voice = voiceIssue(markdown, spec.voice ?? null);
   if (voice) issues.push(voice);
   return { wordCount, issues };
@@ -661,8 +672,10 @@ export function correctionPrompt(
   markdown: string,
   issues: string[],
   spec: LayoutSpec,
-  sources: { title: string; url: string; citation?: string }[] = []
+  sources: { title: string; url: string; citation?: string }[] = [],
+  research?: string
 ): string {
+  const facts = research ? `\nRESEARCH FACTS (figures, named guidance and answers to use for article-wide problems):\n${research.slice(0, 12000)}\n` : '';
   const sourceList = sources.length
     ? `\nIf a reference must be added or corrected, use ONLY these verified sources. Copy the "Cite as" text exactly; never guess authors, years or journals:\n${sources
         .map((s) => (s.citation ? `- Cite as: ${s.citation}` : `- ${s.title}. ${s.url}`))
@@ -674,12 +687,12 @@ export function correctionPrompt(
 
 ${issues.map((i, n) => `${n + 1}. ${i}`).join('\n')}
 
-Fix EVERY problem in the list: structure problems are as important as the word count, so do not skip any. Change only the sections the problems name (and trim wording elsewhere only if the word count must change). Copy every other section exactly as it is, especially the closing sections' tables, lists and FAQ format. Keep the facts, tone, headings and section order, and add no new claims.${sourceList}${noPadding}
+Fix EVERY problem in the list: structure problems are as important as the word count, so do not skip any. For a problem that names sections, change those sections. For an article-wide problem (too few figures, guidance not named, references not described in the text, missing reader questions, the "you" voice), edit the body sections where that content fits best, using the verified sources and research facts below; replace weaker or repeated sentences rather than adding length, so the word count stays in range. Keep the closing sections' tables, lists and FAQ format, the headings, the section order and the layout exactly as they are, and add no claim that the sources do not support.${sourceList}${noPadding}
 ${patternsText(spec.patterns)}
 
 Target length: ${spec.minWords} to ${spec.maxWords} words, excluding the References section. Count carefully.
 Output the COMPLETE corrected article in Markdown and nothing else: no notes, no explanation.
-
+${facts}
 ARTICLE:
 ${markdown}`;
 }
@@ -722,7 +735,7 @@ export async function finalizeArticle(
   markdown: string,
   spec: LayoutSpec,
   fix: (prompt: string) => Promise<string>,
-  opts: { maxPasses?: number; sources?: { title: string; url: string; citation?: string }[] } = {}
+  opts: { maxPasses?: number; sources?: { title: string; url: string; citation?: string }[]; research?: string } = {}
 ): Promise<FinalizeResult> {
   const score = (r: LayoutReport) =>
     r.issues.length * 1000 + Math.max(0, r.wordCount - spec.maxWords, spec.minWords - r.wordCount);
@@ -738,7 +751,7 @@ export async function finalizeArticle(
   while (best.issues.length && passes < limit && (passes < base || improved)) {
     passes++;
     improved = false;
-    const revised = dedupeReferences((await fix(correctionPrompt(best.article, best.issues, spec, opts.sources))).trim(), spec.referencesHeading);
+    const revised = dedupeReferences((await fix(correctionPrompt(best.article, best.issues, spec, opts.sources, opts.research))).trim(), spec.referencesHeading);
     // A pass that drops most of the article is a failed pass, not a shorter article.
     if (!revised || countWords(revised) < spec.minWords * 0.6) continue;
     const report = checkLayout(revised, spec);

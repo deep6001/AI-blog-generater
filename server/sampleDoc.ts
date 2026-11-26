@@ -1,5 +1,6 @@
 import { patternsFromOutline, patternsText } from './samplePatterns';
 import { measureVoice, voiceFromOutline, voiceLine, voiceRule } from './voice';
+import { evidenceLine, measureEvidence } from './evidence';
 // Reads an approved sample article (.docx) and describes its layout, so new blogs can follow it
 // without copying its wording. Produces a Markdown-like outline plus the document's styling.
 import { unzipSync, strFromU8 } from 'fflate';
@@ -106,6 +107,9 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
   const body = documentXml.match(/<w:body>([\s\S]*)<\/w:body>/)?.[1] || '';
   const blocks: Block[] = [];
   const paraTexts: string[] = [];
+  // All body text before References (paragraphs, list items, tables), for the evidence measure.
+  const bodyTexts: string[] = [];
+  const beforeRefs = () => !blocks.some((b) => b.kind === 'heading' && /^references/i.test(b.text));
   let wordCount = 0;
 
   for (const m of body.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>|<w:p\b[\s\S]*?<\/w:p>/g)) {
@@ -114,6 +118,7 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
       const rows = el.match(/<w:tr\b[\s\S]*?<\/w:tr>/g) || [];
       const header = (rows[0]?.match(/<w:tc\b[\s\S]*?<\/w:tc>/g) || []).map((c) => textOf(c).trim());
       wordCount += words(textOf(el));
+      if (beforeRefs()) bodyTexts.push(textOf(el));
       blocks.push({ kind: 'table', rows: rows.length, header });
       continue;
     }
@@ -127,6 +132,7 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
       continue;
     }
     const numId = attr(el, 'numId', 'val');
+    if (numId && beforeRefs()) bodyTexts.push(text);
     if (numId) {
       const format = numbering.get(numId) === 'decimal' ? 'numbered' : 'bulleted';
       const prev = blocks[blocks.length - 1];
@@ -141,7 +147,10 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
       blocks.push({ kind: 'para', words: words(rest.join(' ')), faq: true, link: false });
     } else {
       blocks.push({ kind: 'para', words: words(text), link: /<w:hyperlink\b/.test(el) });
-      if (!blocks.some((b) => b.kind === 'heading' && /^references/i.test(b.text))) paraTexts.push(text);
+      if (beforeRefs()) {
+        paraTexts.push(text);
+        bodyTexts.push(text);
+      }
     }
   }
 
@@ -182,6 +191,8 @@ export function summariseSampleDocx(bytes: Uint8Array): SampleSummary {
   // How much the sample speaks to the reader as "you", so new articles can match it.
   const voice = measureVoice(paraTexts);
   if (voice && voice.share > 0) lines.push(voiceLine(voice));
+  const evidence = measureEvidence(bodyTexts.join('\n'));
+  if (evidence) lines.push(evidenceLine(evidence));
   return {
     outline: lines.join('\n'),
     wordCount,

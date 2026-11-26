@@ -125,7 +125,13 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
   const [forceFreshResearch, setForceFreshResearch] = useState(false);
 
   // The client's approved reference sites: the project's own list, else the guideline profile's domains.
-  const approvedSources = project.approvedSources?.length ? project.approvedSources : guidelines?.allowedDomains || [];
+  // Empty when the server's APPROVED_REFERENCE_CHECK switch is off, so research runs and reuses as normal.
+  const approvedSources =
+    modelCatalog.approvedReferenceCheck === false
+      ? []
+      : project.approvedSources?.length
+        ? project.approvedSources
+        : guidelines?.allowedDomains || [];
 
   /** Returns the research pack for this topic, running web research if needed. null means it failed. */
   const prepareResearch = async (topic: string): Promise<ResearchPack | undefined | null> => {
@@ -279,7 +285,10 @@ export const ExecutionStudio: React.FC<ExecutionStudioProps> = ({
           model,
           guidelines: guidelines ? guidelinePayload(guidelines) : undefined,
           targetWordCount: project.targetWordCount,
-          sources: research?.approvedReferences ?? research?.sources ?? [],
+          sources:
+            (modelCatalog.approvedReferenceCheck === false ? undefined : research?.approvedReferences) ?? research?.sources ?? [],
+          brief: research?.brief,
+          topic: research?.topic,
           approvedSources: research?.approvedReferences ? research.approvedSources : undefined,
         }),
       });

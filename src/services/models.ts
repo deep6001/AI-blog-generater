@@ -9,6 +9,8 @@ export interface ModelCatalog {
   defaultModel: string | null;
   providers: { id: ModelOption['provider']; label: string }[];
   models: ModelOption[];
+  /** Server switch APPROVED_REFERENCE_CHECK; when false the approved-reference step is skipped. */
+  approvedReferenceCheck?: boolean;
 }
 
 export const EMPTY_CATALOG: ModelCatalog = { defaultModel: null, providers: [], models: [] };

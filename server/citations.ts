@@ -24,6 +24,10 @@ const ORGS: Record<string, string> = {
   'bad.org.uk': 'British Association of Dermatologists',
   'baaps.org.uk': 'BAAPS',
   'bapras.org.uk': 'BAPRAS',
+  'rcog.org.uk': 'Royal College of Obstetricians and Gynaecologists',
+  'rcophth.ac.uk': 'Royal College of Ophthalmologists',
+  'rcplondon.ac.uk': 'Royal College of Physicians',
+  'cochranelibrary.com': 'Cochrane',
   'fda.gov': 'U.S. Food and Drug Administration',
   'asa.org.uk': 'Advertising Standards Authority',
   'cqc.org.uk': 'Care Quality Commission',
@@ -56,7 +60,16 @@ function fromMetaName(name: string): string {
 }
 
 const yearOf = (s?: string) => s?.match(/\b(19|20)\d{2}\b/)?.[0];
-const cleanTitle = (t?: string) => t?.replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim();
+// Page titles often carry the site name and section after a bar: "Recommendations | Intrapartum care | Guidance | NICE".
+const cleanTitle = (t?: string) => {
+  if (!t) return t;
+  const parts = t.replace(/\s+/g, ' ').split(/\s+[|\u2013\u2014]\s+|\s+-\s+(?=[A-Z][\w ]{0,40}$)/).map((p) => p.trim()).filter(Boolean);
+  const SITE = /^(NICE|NHS|RCOG|Guidance|Cochrane( Library)?|GOV\.UK|PubMed|PMC|BMJ|The Lancet|Royal College of [A-Za-z ]+|National Institute for Health and Care Excellence)$/i;
+  const kept = parts.filter((p, i) => i === 0 || !SITE.test(p));
+  // Keep the two most descriptive parts, e.g. "Recommendations | Intrapartum care" -> "Intrapartum care: recommendations".
+  const title = kept.length > 1 && /^(recommendations|overview|chapter|guidance)$/i.test(kept[0]) ? `${kept[1]}: ${kept[0].toLowerCase()}` : kept[0];
+  return title.replace(/[.\s]+$/, '').trim();
+};
 
 /** Citation meta tags from a page's HTML (Highwire/Google Scholar tags used by most journals). */
 export function metaFromHtml(html: string): CitationMeta | null {

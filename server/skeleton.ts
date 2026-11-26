@@ -1,4 +1,6 @@
 import { voiceRule } from './voice';
+import { checklistRule } from './coverage';
+import { evidenceRule, DEFAULT_EVIDENCE, REFERENCE_PRIORITY, sourceKind, type Evidence } from './evidence';
 // Builds the article on the sample's exact blueprint. The sample outline (from sampleDoc.ts) becomes a
 // fixed list of slots: every section in order, with its exact paragraphs, callout labels, table and
 // list. The model only fills the slots for the new topic; the article is then assembled here, so its
@@ -173,6 +175,14 @@ export interface FillOptions {
   bp: Blueprint;
   /** The sample's "you" voice, from its outline. */
   voice?: import('./voice').Voice | null;
+  /** The sample's use of figures and named guidance. */
+  evidence?: Evidence | null;
+  /** Questions from the research that the article must answer. */
+  checklist?: string[];
+  /** The research brief, for facts on checklist questions the draft did not cover. */
+  research?: string;
+  /** Problems the final check found in the current version (the draft); the refill must fix them. */
+  fixes?: string[];
   draft: string;
   minWords: number;
   maxWords: number;
@@ -208,19 +218,25 @@ ${opts.voice ? `- ${voiceRule(opts.voice)}
 ` : ''}- Answer each section's question directly with what IS known first (study findings with figures, what happens in practice, who it suits). Mention a limit of the evidence briefly and only where it matters; do not end every section with what is not known.
 - Cover the concrete situations readers ask about in the draft's research (for example complications, over- or under-correction, what happens next), not only general statements.
 - Use only facts from the draft and its sources. Do not invent studies, figures or references.
-${cite.length ? `- references: choose from these and copy the "Cite as" text exactly:\n${cite.map((s) => `  - ${s.citation || `${s.title}. Available at: ${s.url}`}`).join('\n')}\n` : '- references: copy them from the draft exactly.\n'}${
+- ${evidenceRule(opts.evidence || DEFAULT_EVIDENCE, target)}
+- ${REFERENCE_PRIORITY}
+${opts.checklist?.length ? `- ${checklistRule(opts.checklist)}\n` : ''}${cite.length ? `- references: choose from these and copy the "Cite as" text exactly:\n${cite.map((s) => `  - [${sourceKind(s.url, `${s.title} ${s.citation || ''}`)}] ${s.citation || `${s.title}. Available at: ${s.url}`}`).join('\n')}\n` : '- references: copy them from the draft exactly.\n'}${
     opts.internalLinks?.trim()
       ? `- Put this internal link inside a natural sentence in the last Final Thoughts paragraph, as a Markdown link [anchor](url):\n${opts.internalLinks.trim()}\n`
       : ''
   }- Plain text inside strings: no Markdown headings or bullets. You may use **bold** sparingly and Markdown links.
-${opts.rules ? `\nCLIENT WRITING RULES (for wording and tone; the template decides the layout):\n${opts.rules.trim()}\n` : ''}${partial}
+${opts.rules ? `\nCLIENT WRITING RULES (for wording and tone; the template decides the layout):\n${opts.rules.trim()}\n` : ''}${
+    opts.fixes?.length
+      ? `\nTHE DRAFT ARTICLE IS THE CURRENT VERSION. A CHECK FOUND THESE PROBLEMS IN IT. Keep what is already good and fix every one of them in this version, using the research notes for missing facts, figures and named guidance:\n${opts.fixes.map((f) => `- ${f}`).join('\n')}\n`
+      : ''
+  }${partial}
 Reply with ONLY the completed JSON, no code fences or comments.
 
 TEMPLATE:
 ${JSON.stringify(template(bp, scale, only), null, 2)}
 
 DRAFT ARTICLE:
-${opts.draft}`;
+${opts.draft}${opts.research ? `\n\nRESEARCH NOTES (use these facts, figures and named guidance for questions the draft does not answer):\n${opts.research}` : ''}`;
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
