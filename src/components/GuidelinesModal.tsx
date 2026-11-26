@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { GuidelineProfile } from '../types/pipeline';
+import { GuidelineProfile, Project } from '../types/pipeline';
 import { createDefaultGuidelineProfile } from '../utils/guidelines';
 import { analyseSampleDocx, createGuidelineProfile, deleteGuidelineProfile, updateGuidelineProfile } from '../services/guidelines';
 import { BookMarked, Copy, FileText, Loader2, Plus, Save, Trash2, Upload, X } from 'lucide-react';
@@ -8,6 +8,8 @@ interface GuidelinesModalProps {
   isOpen: boolean;
   tenantId: string;
   profiles: GuidelineProfile[];
+  /** Projects in the workspace, to show which ones a profile's sample applies to. */
+  projects?: Project[];
   onClose: () => void;
   onProfilesChanged: (profiles: GuidelineProfile[]) => void;
 }
@@ -20,6 +22,7 @@ export const GuidelinesModal: React.FC<GuidelinesModalProps> = ({
   isOpen,
   tenantId,
   profiles,
+  projects = [],
   onClose,
   onProfilesChanged,
 }) => {
@@ -281,6 +284,19 @@ export const GuidelinesModal: React.FC<GuidelinesModalProps> = ({
                         An approved article whose layout every blog should follow. Only its structure and styling are used,
                         never its wording. Save the profile after uploading.
                       </p>
+                      {(() => {
+                        const using = projects.filter((p) => p.guidelineProfileId === draft.id);
+                        const own = using.filter((p) => p.sampleOutline);
+                        return (
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
+                            {using.length
+                              ? `This sample applies to every project using this profile: ${using.map((p) => p.name).join(', ')}.`
+                              : 'No project uses this profile yet.'}{' '}
+                            {own.length ? `${own.map((p) => p.name).join(', ')} ${own.length === 1 ? 'has' : 'have'} its own sample and ignore${own.length === 1 ? 's' : ''} this one. ` : ''}
+                            To give one project a different layout, open that project's Settings and use "Sample Article for This Project".
+                          </p>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-2">
                       <label className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center gap-1.5">

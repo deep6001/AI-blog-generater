@@ -461,6 +461,7 @@ function MainAppContent() {
         isOpen={isGuidelinesOpen}
         tenantId={tenantId}
         profiles={guidelineProfiles}
+        projects={projects}
         onClose={() => setIsGuidelinesOpen(false)}
         onProfilesChanged={setGuidelineProfiles}
       />
